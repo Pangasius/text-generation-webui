@@ -307,13 +307,11 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
 
         # Generate the entire reply at once.
         if not state['stream']:
-            
-            if shared.gradio['use_llama_index'] :
+            if shared.settings['use_llama_index'] :
                 with torch.no_grad():
                     if shared.index is None :
                         shared.index = IndexEngine().querier(streaming=False)
                     resp = shared.index.engine.query(question)
-                    print(resp.response + "\n" + resp.get_formatted_sources())
                     yield resp.response + "\n" + resp.get_formatted_sources()
                     
             else :
@@ -328,16 +326,17 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
         # Stream the reply 1 token at a time.
         # This is based on the trick of using 'stopping_criteria' to create an iterator.
         else:
-            
-            if shared.gradio['use_llama_index'] :
+            if shared.settings['use_llama_index']:
                 with torch.no_grad():
                     if shared.index is None :
                         shared.index = IndexEngine().querier(streaming=True)
-                    response = ""
-                    for output in shared.index.engine.query(question).response_gen :
-                        response += output
-                        yield response
-                        if len(output) > 0 and output[-1] in eos_token_ids:
+                    
+                    stream_resp = shared.index.engine.query(question)
+                    output = "Using sources : \n" + stream_resp.get_formatted_sources(30) + "\n"
+                    for part in stream_resp.response_gen :
+                        output += part
+                        yield output
+                        if len(part) > 0 and part[-1] in eos_token_ids:
                             break
             else :
                 
@@ -353,7 +352,6 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
                 with generate_with_streaming(**generate_params) as generator:
                     for output in generator:
                         resp = get_reply_from_output_ids(output, input_ids, original_question, state, is_chat=is_chat)
-                        print(resp)
                         yield resp
                         if output[-1] in eos_token_ids:
                             break

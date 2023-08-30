@@ -33,6 +33,7 @@ settings = {
     'show_controls': True,
     'start_with': '',
     'mode': 'chat',
+    'use_llama_index': True,
     'chat_style': 'TheEncrypted777',
     'character': 'None',
     'prompt-default': 'QA',

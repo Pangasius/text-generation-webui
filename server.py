@@ -70,6 +70,7 @@ def create_interface():
     shared.persistent_interface_state.update({
         'loader': shared.args.loader or 'Transformers',
         'mode': shared.settings['mode'],
+        'use_llama_index' : shared.settings['use_llama_index'],
         'character_menu': shared.args.character or shared.settings['character'],
         'instruction_template': shared.settings['instruction_template'],
         'prompt_menu-default': shared.settings['prompt-default'],

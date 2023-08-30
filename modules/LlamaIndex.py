@@ -262,6 +262,6 @@ class IndexEngine():
         
     def querier(self, streaming=True) :
         if self.engine is None :
-            self.engine = self.as_query_engine(streaming=streaming)
+            self.as_query_engine(streaming=streaming)
         
         return self

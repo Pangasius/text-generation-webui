@@ -22,8 +22,7 @@ loaders_and_params = OrderedDict({
         'alpha_value',
         'rope_freq_base',
         'compress_pos_emb',
-        'transformers_info',
-        'use_llama_index'
+        'transformers_info'
     ],
     'ExLlama_HF': [
         'gpu_split',
@@ -57,16 +56,14 @@ loaders_and_params = OrderedDict({
         'disk',
         'auto_devices',
         'trust_remote_code',
-        'autogptq_info',
-        'use_llama_index'
+        'autogptq_info'
     ],
     'GPTQ-for-LLaMa': [
         'wbits',
         'groupsize',
         'model_type',
         'pre_layer',
-        'gptq_for_llama_info',
-        'use_llama_index'
+        'gptq_for_llama_info'
     ],
     'llama.cpp': [
         'n_ctx',

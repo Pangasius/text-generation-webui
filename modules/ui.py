@@ -137,6 +137,7 @@ def list_interface_input_elements():
         'greeting',
         'context',
         'mode',
+        'use_llama_index',
         'instruction_template',
         'name1_instruct',
         'name2_instruct',
