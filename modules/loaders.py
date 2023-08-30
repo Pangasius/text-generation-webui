@@ -19,10 +19,10 @@ loaders_and_params = OrderedDict({
         'use_double_quant',
         'quant_type',
         'compute_dtype',
-        'trust_remote_code',
         'alpha_value',
         'compress_pos_emb',
-        'transformers_info'
+        'transformers_info',
+        'use_llama_index'
     ],
     'ExLlama_HF': [
         'gpu_split',
@@ -54,6 +54,7 @@ loaders_and_params = OrderedDict({
         'auto_devices',
         'trust_remote_code',
         'autogptq_info',
+        'use_llama_index'
     ],
     'GPTQ-for-LLaMa': [
         'wbits',
@@ -61,6 +62,7 @@ loaders_and_params = OrderedDict({
         'model_type',
         'pre_layer',
         'gptq_for_llama_info',
+        'use_llama_index'
     ],
     'llama.cpp': [
         'n_ctx',

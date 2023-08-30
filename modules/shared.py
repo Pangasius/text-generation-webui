@@ -10,6 +10,7 @@ from modules.logging_colors import logger
 # Model variables
 model = None
 tokenizer = None
+index = None
 model_name = "None"
 is_seq2seq = False
 model_dirty_from_training = False
@@ -160,6 +161,9 @@ parser.add_argument('--rwkv-cuda-on', action='store_true', help='RWKV: Compile t
 # RoPE
 parser.add_argument('--compress_pos_emb', type=int, default=1, help="Positional embeddings compression factor. Should typically be set to max_seq_len / 2048.")
 parser.add_argument('--alpha_value', type=int, default=1, help="Positional embeddings alpha factor for NTK RoPE scaling. Use either this or compress_pos_emb, not both.")
+
+# LLamaIndex
+parser.add_argument('--use-llama-index', action='store_true', help='Use llama index for faster inference.')
 
 # Gradio
 parser.add_argument('--listen', action='store_true', help='Make the web UI reachable from your local network.')

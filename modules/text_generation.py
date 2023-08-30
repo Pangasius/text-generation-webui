@@ -22,6 +22,8 @@ from modules.html_generator import generate_4chan_html, generate_basic_html
 from modules.logging_colors import logger
 from modules.models import clear_torch_cache, local_rank
 
+from modules.LlamaIndex import IndexEngine
+from llama_index.response.schema import Response, StreamingResponse
 
 def generate_reply(*args, **kwargs):
     shared.generation_lock.acquire()
@@ -293,31 +295,56 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
 
         # Generate the entire reply at once.
         if not state['stream']:
-            with torch.no_grad():
-                output = shared.model.generate(**generate_params)[0]
-                if cuda:
-                    output = output.cuda()
+            
+            if shared.gradio['use_llama_index'] :
+                with torch.no_grad():
+                    if shared.index is None :
+                        shared.index = IndexEngine().querier(streaming=False)
+                    resp = shared.index.engine.query(question)
+                    print(resp.response + "\n" + resp.get_formatted_sources())
+                    yield resp.response + "\n" + resp.get_formatted_sources()
+                    
+            else :
+                
+                with torch.no_grad():
+                    output = shared.model.generate(**generate_params)[0]
+                    if cuda:
+                        output = output.cuda()
 
-            yield get_reply_from_output_ids(output, input_ids, original_question, state, is_chat=is_chat)
+                yield get_reply_from_output_ids(output, input_ids, original_question, state, is_chat=is_chat)
 
         # Stream the reply 1 token at a time.
         # This is based on the trick of using 'stopping_criteria' to create an iterator.
         else:
-
-            def generate_with_callback(callback=None, *args, **kwargs):
-                kwargs['stopping_criteria'].append(Stream(callback_func=callback))
-                clear_torch_cache()
+            
+            if shared.gradio['use_llama_index'] :
                 with torch.no_grad():
-                    shared.model.generate(**kwargs)
+                    if shared.index is None :
+                        shared.index = IndexEngine().querier(streaming=True)
+                    response = ""
+                    for output in shared.index.engine.query(question).response_gen :
+                        response += output
+                        yield response
+                        if len(output) > 0 and output[-1] in eos_token_ids:
+                            break
+            else :
+                
+                def generate_with_callback(callback=None, *args, **kwargs):
+                    kwargs['stopping_criteria'].append(Stream(callback_func=callback))
+                    clear_torch_cache()
+                    with torch.no_grad():
+                        shared.model.generate(**kwargs)
 
-            def generate_with_streaming(**kwargs):
-                return Iteratorize(generate_with_callback, [], kwargs, callback=None)
+                def generate_with_streaming(**kwargs):
+                    return Iteratorize(generate_with_callback, [], kwargs, callback=None)
 
-            with generate_with_streaming(**generate_params) as generator:
-                for output in generator:
-                    yield get_reply_from_output_ids(output, input_ids, original_question, state, is_chat=is_chat)
-                    if output[-1] in eos_token_ids:
-                        break
+                with generate_with_streaming(**generate_params) as generator:
+                    for output in generator:
+                        resp = get_reply_from_output_ids(output, input_ids, original_question, state, is_chat=is_chat)
+                        print(resp)
+                        yield resp
+                        if output[-1] in eos_token_ids:
+                            break
 
     except Exception:
         traceback.print_exc()
