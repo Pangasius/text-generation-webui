@@ -156,15 +156,13 @@ text-generation-webui
 
 In the "Model" tab of the UI, those models can be automatically downloaded from Hugging Face. You can also download them via the command-line with `python download-model.py organization/model`.
 
-* GGML models are a single file and should be placed directly into `models`. Example:
+* GGML/GGUF models are a single file and should be placed directly into `models`. Example:
 
 ```
 text-generation-webui
 ├── models
 │   ├── llama-13b.ggmlv3.q4_K_M.bin
 ```
-
-Those models must be downloaded manually, as they are not currently supported by the automated downloader.
 
 #### GPT-4chan
 
@@ -258,7 +256,7 @@ Optionally, you can use the following command-line flags:
 | `--quant_type QUANT_TYPE`                   | quant_type for 4-bit. Valid options: nf4, fp4. |
 | `--use_double_quant`                        | use_double_quant for 4-bit. |
 
-#### GGML (for llama.cpp and ctransformers)
+#### GGML/GGUF (for llama.cpp and ctransformers)
 
 | Flag        | Description |
 |-------------|-------------|
@@ -269,17 +267,18 @@ Optionally, you can use the following command-line flags:
 
 #### llama.cpp
 
-| Flag        | Description |
-|-------------|-------------|
-| `--no-mmap` | Prevent mmap from being used. |
-| `--mlock`   | Force the system to keep the model in RAM. |
+| Flag          | Description |
+|---------------|---------------|
+| `--no-mmap`   | Prevent mmap from being used. |
+| `--mlock`     | Force the system to keep the model in RAM. |
 | `--mul_mat_q` | Activate new mulmat kernels. |
 | `--cache-capacity CACHE_CAPACITY`   | Maximum cache capacity. Examples: 2000MiB, 2GiB. When provided without units, bytes will be assumed. |
-| `--tensor_split TENSOR_SPLIT` | Split the model across multiple GPUs, comma-separated list of proportions, e.g. 18,17 |
-| `--llama_cpp_seed SEED` | Seed for llama-cpp models. Default 0 (random). |
-| `--n_gqa N_GQA`         | grouped-query attention. Must be 8 for llama-2 70b. |
-| `--rms_norm_eps RMS_NORM_EPS`  | 5e-6 is a good value for llama-2 models. |
+| `--tensor_split TENSOR_SPLIT`  | Split the model across multiple GPUs, comma-separated list of proportions, e.g. 18,17 |
+| `--llama_cpp_seed SEED`        | Seed for llama-cpp models. Default 0 (random). |
+| `--n_gqa N_GQA`                | GGML only (not used by GGUF): Grouped-Query Attention. Must be 8 for llama-2 70b. |
+| `--rms_norm_eps RMS_NORM_EPS`  | GGML only (not used by GGUF): 5e-6 is a good value for llama-2 models. |
 | `--cpu`                        | Use the CPU version of llama-cpp-python instead of the GPU-accelerated version. |
+|`--cfg-cache`                   | llamacpp_HF: Create an additional cache for CFG negative prompts. |
 
 #### ctransformers
 
@@ -304,6 +303,7 @@ Optionally, you can use the following command-line flags:
 |------------------|-------------|
 |`--gpu-split`     | Comma-separated list of VRAM (in GB) to use per GPU device for model layers, e.g. `20,7,7` |
 |`--max_seq_len MAX_SEQ_LEN`           | Maximum sequence length. |
+|`--cfg-cache`                         | ExLlama_HF: Create an additional cache for CFG negative prompts. Necessary to use CFG with that loader, but not necessary for CFG with base ExLlama. |
 
 #### GPTQ-for-LLaMa
 
@@ -335,8 +335,9 @@ Optionally, you can use the following command-line flags:
 
 | Flag             | Description |
 |------------------|-------------|
-|`--alpha_value ALPHA_VALUE`           | Positional embeddings alpha factor for NTK RoPE scaling. Use either this or compress_pos_emb, not both. |
-|`--compress_pos_emb COMPRESS_POS_EMB` | Positional embeddings compression factor. Should typically be set to max_seq_len / 2048. |
+| `--alpha_value ALPHA_VALUE`           | Positional embeddings alpha factor for NTK RoPE scaling. Use either this or compress_pos_emb, not both. |
+| `--rope_freq_base ROPE_FREQ_BASE`     | If greater than 0, will be used instead of alpha_value. Those two are related by rope_freq_base = 10000 * alpha_value ^ (64 / 63). |
+| `--compress_pos_emb COMPRESS_POS_EMB` | Positional embeddings compression factor. Should be set to (context length) / (model's original context length). Equal to 1/rope_freq_scale. |
 
 #### Gradio
 
@@ -382,3 +383,7 @@ If you would like to contribute to the project, check out the [Contributing guid
 
 * Subreddit: https://www.reddit.com/r/oobabooga/
 * Discord: https://discord.gg/jwZCF2dPQN
+
+## Acknowledgment
+
+In August 2023, [Andreessen Horowitz](https://a16z.com/) (a16z) provided a generous grant to encourage and support my independent work on this project. I am **extremely** grateful for their trust and recognition, which will allow me to dedicate more time towards realizing the full potential of text-generation-webui.

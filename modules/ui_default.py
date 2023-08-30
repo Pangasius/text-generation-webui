@@ -18,7 +18,7 @@ def create_ui():
         with gr.Row():
             with gr.Column():
                 with gr.Row():
-                    shared.gradio['textbox-default'] = gr.Textbox(value='', elem_classes=['textbox_default', 'add_scrollbar'], lines=27, label='Input')
+                    shared.gradio['textbox-default'] = gr.Textbox(value='', lines=27, label='Input', elem_classes=['textbox_default', 'add_scrollbar'])
                     shared.gradio['token-counter-default'] = gr.HTML(value="<span>0</span>", elem_classes=["token-counter", "default-token-counter"])
 
                 with gr.Row():
@@ -34,7 +34,7 @@ def create_ui():
 
             with gr.Column():
                 with gr.Tab('Raw'):
-                    shared.gradio['output_textbox'] = gr.Textbox(lines=27, label='Output', elem_classes=['textbox_default_output', 'add_scrollbar'])
+                    shared.gradio['output_textbox'] = gr.Textbox(lines=27, label='Output', elem_id='textbox-default', elem_classes=['textbox_default_output', 'add_scrollbar'])
 
                 with gr.Tab('Markdown'):
                     shared.gradio['markdown_render-default'] = gr.Button('Render')
@@ -44,8 +44,15 @@ def create_ui():
                     shared.gradio['html-default'] = gr.HTML()
 
                 with gr.Tab('Logits'):
-                    shared.gradio['get_logits-default'] = gr.Button('Get next token probabilities')
-                    shared.gradio['logits-default'] = gr.Textbox(lines=23, label='Output', elem_classes=['textbox_logits', 'add_scrollbar'])
+                    with gr.Row():
+                        with gr.Column(scale=10):
+                            shared.gradio['get_logits-default'] = gr.Button('Get next token probabilities')
+                        with gr.Column(scale=1):
+                            shared.gradio['use_samplers-default'] = gr.Checkbox(label='Use samplers', value=True, elem_classes=['no-background'])
+
+                    with gr.Row():
+                        shared.gradio['logits-default'] = gr.Textbox(lines=23, label='Output', elem_classes=['textbox_logits', 'add_scrollbar'])
+                        shared.gradio['logits-default-previous'] = gr.Textbox(lines=23, label='Previous output', elem_classes=['textbox_logits', 'add_scrollbar'])
 
 
 def create_event_handlers():
@@ -83,5 +90,7 @@ def create_event_handlers():
         lambda x: x + '.txt', gradio('prompt_menu-default'), gradio('delete_filename')).then(
         lambda: gr.update(visible=True), None, gradio('file_deleter'))
 
-    shared.gradio['textbox-default'].change(lambda x : f"<span>{count_tokens(x)}</span>", gradio('textbox-default'), gradio('token-counter-default'), show_progress=False)
-    shared.gradio['get_logits-default'].click(logits.get_next_logits, gradio('textbox-default'), gradio('logits-default'), show_progress=False)
+    shared.gradio['textbox-default'].change(lambda x: f"<span>{count_tokens(x)}</span>", gradio('textbox-default'), gradio('token-counter-default'), show_progress=False)
+    shared.gradio['get_logits-default'].click(
+        ui.gather_interface_values, gradio(shared.input_elements), gradio('interface_state')).then(
+        logits.get_next_logits, gradio('textbox-default', 'interface_state', 'use_samplers-default', 'logits-default'), gradio('logits-default', 'logits-default-previous'), show_progress=False)

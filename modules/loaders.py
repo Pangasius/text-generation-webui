@@ -20,6 +20,7 @@ loaders_and_params = OrderedDict({
         'quant_type',
         'compute_dtype',
         'alpha_value',
+        'rope_freq_base',
         'compress_pos_emb',
         'transformers_info',
         'use_llama_index'
@@ -28,13 +29,16 @@ loaders_and_params = OrderedDict({
         'gpu_split',
         'max_seq_len',
         'alpha_value',
+        'rope_freq_base',
         'compress_pos_emb',
+        'cfg_cache',
         'exllama_HF_info',
     ],
     'ExLlama': [
         'gpu_split',
         'max_seq_len',
         'alpha_value',
+        'rope_freq_base',
         'compress_pos_emb',
         'exllama_info',
     ],
@@ -78,6 +82,7 @@ loaders_and_params = OrderedDict({
         'mul_mat_q',
         'llama_cpp_seed',
         'alpha_value',
+        'rope_freq_base',
         'compress_pos_emb',
         'cpu',
     ],
@@ -94,8 +99,10 @@ loaders_and_params = OrderedDict({
         'mlock',
         'mul_mat_q',
         'alpha_value',
+        'rope_freq_base',
         'compress_pos_emb',
         'cpu',
+        'cfg_cache',
         'llamacpp_HF_info',
     ],
     'ctransformers': [
@@ -103,7 +110,9 @@ loaders_and_params = OrderedDict({
         'n_gpu_layers',
         'n_batch',
         'threads',
-        'model_type'
+        'model_type',
+        'no_mmap',
+        'mlock'
     ]
 })
 
@@ -157,6 +166,8 @@ loaders_samplers = {
         'mirostat_mode',
         'mirostat_tau',
         'mirostat_eta',
+        'guidance_scale',
+        'negative_prompt',
         'ban_eos_token',
         'add_bos_token',
         'skip_special_tokens',
@@ -265,6 +276,8 @@ loaders_samplers = {
         'mirostat_mode',
         'mirostat_tau',
         'mirostat_eta',
+        'guidance_scale',
+        'negative_prompt',
         'ban_eos_token',
         'add_bos_token',
         'skip_special_tokens',
@@ -293,7 +306,7 @@ loaders_model_types = {
         "gptneox",
         "llama",
         "mpt",
-        "dollyv2"
+        "dollyv2",
         "replit",
         "starcoder",
         "gptbigcode",
