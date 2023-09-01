@@ -11,6 +11,8 @@ import regex as re
 
 from llama_index.llms import HuggingFaceLLM
 
+from pdf2docx import Converter
+
 # package: code/backend
 
 import modules.shared as shared
@@ -22,6 +24,8 @@ from llama_index import (
 
 import pytesseract
 pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
+
+from compress import Compressor
 
 import time
 
@@ -138,21 +142,35 @@ class IndexEngine():
         
         print("Files...")
         
-        #first unzip all zip files
-        for paths in glob.glob("./examples/doc/**/*.zip", recursive=True):
+        print("Unzipping and converting files...")
+        #first unzip all zip files and turn all pdf files into docx files
+        for paths in glob.glob("./examples/**/*", recursive=True):
             try :
-                print("Found zip file", paths)
-                with ZipFile(paths, 'r') as zipObj:
-                    zipObj.extractall("/".join(paths.split("/")[:-1]))
-                os.remove(paths)
-                print("Extracted zip file", paths)
+                if re.match(r".*\.zip$", paths) :
+                    print("Found zip file", paths)
+                    with ZipFile(paths, 'r') as zipObj:
+                        zipObj.extractall("/".join(paths.split("/")[:-1]))
+                    os.remove(paths)
+                    print("Extracted zip file", paths)
+                elif re.match(r".*\.pdf$", paths) :
+                    print("Found pdf file", paths)
+                    cv = Converter(paths)
+                    cv.convert(paths.replace(".pdf", ".docx"))
+                    os.remove(paths)
+                    print("Converted pdf file", paths)
+                else :
+                    continue
             except :
                 print("Error extracting zip file", paths)
                 continue
                 
-        
-        for paths in glob.glob("./examples/doc/**/*", recursive=True):
-            if not re.match(r".*\.[a-z]{1,10}$", paths) or re.match(r".*(((I|i)con(s)?)|(\.graffle)|(MACOSX))\/.*", paths):
+        print("Unstructured reading files...")
+        for paths in glob.glob("./examples/**/*.*", recursive=True):
+            if not re.match(r".*\.[a-z]{1,10}$", paths) or re.match(r".*(((I|i)con(s)?)|(\.graffle)|(MACOSX)|(\/out)|(\/bin))\/.*", paths):
+                print("- ", paths)
+                continue
+            
+            if re.match(r".*/documents.txt$", paths) or re.match(r".*((\.css)|(\.xml)|(\.csv))", paths):
                 print("- ", paths)
                 continue
             
@@ -164,21 +182,49 @@ class IndexEngine():
                 print("Error loading file")
                 continue
             
-        print("Texts...")
+        #most documents are useless because they contain a lot of noise, so we will have to rand them through a filter
+        #first we will separate each documents in chunks of a maximum of 1000 words
+        #then we will run each chunk through the filter
+        #compose back the chunks into documents
         
-        for paths in glob.glob("./examples/F12-FR/available/*", recursive=True):
-            if not re.match(r".*\.[a-z]{1,10}$", paths):
-                print("- ", paths)
-                continue
+        print("Filtering documents...")
+        initial_size = sum(list(map(lambda x : len(x.text), documents)))
+        c = Compressor()
+        for document in documents :
+            #split the document into chunks of 5000 words
+            chunks = []
             
-            try :
-                documents += loader.load_data(file=Path(paths))
-                print("+ ", paths)
-            except :
-                print("- ", paths)
-                print("Error loading file")
-                continue
-
+            for i in range(0, len(document.text.split(" ")), 5000) :
+                chunks.append(" ".join(document.text.split(" ")[i:i+5000]))
+                
+            #try to compress each chunks
+            compressed_chunks = []
+            for i in range(len(chunks)) :
+                compressed_chunks.append(c.compress(chunks[i].encode("utf-8")))
+            
+            #map the chunks to their compressed ratio
+            compressed_chunks = list(map(lambda x : 1 if len(chunks[i]) == 0 else len(x)/len(chunks[i]), compressed_chunks))
+            
+            print("Compressed chunks:", compressed_chunks)
+            
+            #reconstruct the document if ratio is below 0.5
+            document.text = ""
+            for i in range(len(chunks)) :
+                if compressed_chunks[i] < 0.9:
+                    document.text += chunks[i]
+                    
+            if document.text == "" or document.text.__contains__("Problem authenticating") or document.text.__contains__("File Generator"):
+                documents.remove(document)
+            else :
+                #remove all lines with less than 10 characters
+                #remove all lines that contains more than 10% numbers
+                document.text = "\n".join(list(filter(lambda x : False if len(x) < 10 else len(re.findall(r"[0-9]", x))/len(x) < 0.1, document.text.split("\n"))))
+            
+                
+        final_size = sum(list(map(lambda x : len(x.text), documents)))
+        print("Initial size:", initial_size)
+        print("Final size:", final_size)
+        print("Removed", initial_size-final_size, "characters")
             
         t1 = time.time()
         
@@ -227,7 +273,7 @@ class IndexEngine():
         
         #count the files in index and if there are none, index the files
         if len(list(Path("index/vector").glob("*"))) == 0 or len(list(Path("index/kg").glob("*"))) == 0 :
-            return self.index_files()
+            self.index_files()
         
         print("Loading engine...")
         
