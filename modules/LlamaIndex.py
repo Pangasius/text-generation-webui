@@ -133,12 +133,14 @@ class IndexEngine():
         
         print("Wikipedia...")
 
-        WikipediaReader = download_loader("WikipediaReader")
-        loader = WikipediaReader()
-        documents = loader.load_data(pages=["Électricité_de_France", "France", "Electricity pricing"])
+        #WikipediaReader = download_loader("WikipediaReader")
+        #loader = WikipediaReader()
+        #documents = loader.load_data(pages=["Électricité_de_France", "France", "Electricity pricing"])
         
         UnstructuredReader = download_loader("UnstructuredReader")
         loader = UnstructuredReader()
+        
+        documents = []
         
         print("Files...")
         
@@ -189,42 +191,20 @@ class IndexEngine():
         
         print("Filtering documents...")
         initial_size = sum(list(map(lambda x : len(x.text), documents)))
-        c = Compressor()
         for document in documents :
-            #split the document into chunks of 5000 words
-            chunks = []
-            
-            for i in range(0, len(document.text.split(" ")), 5000) :
-                chunks.append(" ".join(document.text.split(" ")[i:i+5000]))
-                
-            #try to compress each chunks
-            compressed_chunks = []
-            for i in range(len(chunks)) :
-                compressed_chunks.append(c.compress(chunks[i].encode("utf-8")))
-            
-            #map the chunks to their compressed ratio
-            compressed_chunks = list(map(lambda x : 1 if len(chunks[i]) == 0 else len(x)/len(chunks[i]), compressed_chunks))
-            
-            print("Compressed chunks:", compressed_chunks)
-            
-            #reconstruct the document if ratio is below 0.5
-            document.text = ""
-            for i in range(len(chunks)) :
-                if compressed_chunks[i] < 0.9:
-                    document.text += chunks[i]
-                    
-            if document.text == "" or document.text.__contains__("Problem authenticating") or document.text.__contains__("File Generator"):
+            if document.text.__contains__("Problem authenticating") or document.text.__contains__("File Generator"):
                 documents.remove(document)
-            else :
-                #remove all lines with less than 10 characters
-                #remove all lines that contains more than 10% numbers
-                document.text = "\n".join(list(filter(lambda x : False if len(x) < 10 else len(re.findall(r"[0-9]", x))/len(x) < 0.1, document.text.split("\n"))))
+                continue
             
-                
-        final_size = sum(list(map(lambda x : len(x.text), documents)))
-        print("Initial size:", initial_size)
-        print("Final size:", final_size)
-        print("Removed", initial_size-final_size, "characters")
+            #remove all emails, ip
+            document.text = re.sub(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)|(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", "", document.text)
+            
+            #remove all phone numbers
+            document.text = re.sub(r"(\d{3}[-\.\s]??\d{3}[-\.\s]??\d{4}|\(\d{3}\)\s*\d{3}[-\.\s]??\d{4}|\d{3}[-\.\s]??\d{4})", "", document.text)
+
+            #remove all lines with less than 10 characters
+            #remove all lines that contains more than 10% numbers
+            document.text = "\n".join(list(filter(lambda x : False if len(x) < 10 else len(re.findall(r"[0-9]", x))/len(x) < 0.1, document.text.split("\n"))))
             
         t1 = time.time()
         
