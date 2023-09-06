@@ -118,8 +118,8 @@ class IndexEngine():
         
         print("Loading model...")
         
-        llm = HuggingFaceLLM(model=shared.model, tokenizer=shared.tokenizer, max_new_tokens=shared.settings['max_new_tokens'])
-        embedder = "local" #Embedding()
+        llm = HuggingFaceLLM(model=shared.model, tokenizer=shared.tokenizer, max_new_tokens=shared.settings['max_new_tokens'], context_window=shared.args.n_ctx)
+        embedder = "local:BAAI/bge-base-en" #Embedding()
         self.service_context = ServiceContext.from_defaults(llm=llm, embed_model=embedder, prompt_helper=prompt_helper)
         
         self.engine = None
@@ -172,7 +172,8 @@ class IndexEngine():
                 print("- ", paths)
                 continue
             
-            if re.match(r".*/documents.txt$", paths) or re.match(r".*((\.css)|(\.xml)|(\.csv))", paths):
+            #Skip the produced document and all unsupported files
+            if re.match(r".*/documents.txt$", paths) or re.match(r".*\.((css)|(xml)|(csv)|(png)|(jpg)|(pdf))", paths):
                 print("- ", paths)
                 continue
             
@@ -183,11 +184,6 @@ class IndexEngine():
                 print("- ", paths)
                 print("Error loading file")
                 continue
-            
-        #most documents are useless because they contain a lot of noise, so we will have to rand them through a filter
-        #first we will separate each documents in chunks of a maximum of 1000 words
-        #then we will run each chunk through the filter
-        #compose back the chunks into documents
         
         print("Filtering documents...")
         initial_size = sum(list(map(lambda x : len(x.text), documents)))
@@ -203,12 +199,14 @@ class IndexEngine():
             document.text = re.sub(r"(\d{3}[-\.\s]??\d{3}[-\.\s]??\d{4}|\(\d{3}\)\s*\d{3}[-\.\s]??\d{4}|\d{3}[-\.\s]??\d{4})", "", document.text)
 
             #remove all lines with less than 10 characters
-            #remove all lines that contains more than 10% numbers
-            document.text = "\n".join(list(filter(lambda x : False if len(x) < 10 else len(re.findall(r"[0-9]", x))/len(x) < 0.1, document.text.split("\n"))))
+            document.text = "\n".join(list(filter(lambda x : (len(x) > 5 and len(x) < 5000), document.text.split("\n"))))
             
         t1 = time.time()
         
         print("Documents loaded in", t1-t0, "seconds")
+        
+        print("Initial size:", initial_size)
+        print("Final size:", sum(list(map(lambda x : len(x.text), documents))))
         
         #save all documents to a file
         with open("examples/documents.txt", "w") as f:
@@ -236,6 +234,7 @@ class IndexEngine():
             tags=tags,
             include_embeddings=True,
             service_context=self.service_context,
+            show_progress=True,
         )
         
         vector_index = VectorStoreIndex.from_documents(documents=documents, service_context=self.service_context)
