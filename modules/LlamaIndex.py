@@ -1,6 +1,6 @@
 # package: code/backend
 
-from llama_index import StorageContext, VectorStoreIndex, download_loader, load_index_from_storage
+from llama_index import StorageContext, VectorStoreIndex, download_loader, load_index_from_storage, SimpleDirectoryReader
 
 from llama_index.indices.service_context import ServiceContext
 from llama_index.indices.prompt_helper import PromptHelper
@@ -67,7 +67,7 @@ from llama_index import QueryBundle
 from llama_index.schema import NodeWithScore
 
 # Retrievers
-from llama_index.retrievers import BaseRetriever, VectorIndexRetriever, KGTableRetriever
+from llama_index.retrievers import BaseRetriever, VectorIndexRetriever, KnowledgeGraphRAGRetriever
 
 from typing import List
 
@@ -81,7 +81,7 @@ class CustomRetriever(BaseRetriever):
     def __init__(
         self,
         vector_retriever: VectorIndexRetriever,
-        kg_retriever: KGTableRetriever,
+        kg_retriever: KnowledgeGraphRAGRetriever,
         mode: str = "OR",
     ) -> None:
         """Init params."""
@@ -119,8 +119,8 @@ class IndexEngine():
         print("Loading model...")
         
         llm = HuggingFaceLLM(model=shared.model, tokenizer=shared.tokenizer, max_new_tokens=shared.settings['max_new_tokens'], context_window=shared.args.n_ctx)
-        embedder = "local:BAAI/bge-base-en" #Embedding()
-        self.service_context = ServiceContext.from_defaults(llm=llm, embed_model=embedder, prompt_helper=prompt_helper)
+        embedder = "local:BAAI/bge-large-en" #Embedding()
+        self.service_context = ServiceContext.from_defaults(llm=llm, embed_model=embedder, prompt_helper=prompt_helper, chunk_size=128, context_window=min(128, shared.args.n_ctx))
         
         self.engine = None
         
@@ -137,8 +137,10 @@ class IndexEngine():
         #loader = WikipediaReader()
         #documents = loader.load_data(pages=["Électricité_de_France", "France", "Electricity pricing"])
         
-        UnstructuredReader = download_loader("UnstructuredReader")
-        loader = UnstructuredReader()
+        unstructuredReader = download_loader("UnstructuredReader")
+        unstructuredLoader = unstructuredReader()
+        
+        toBeProcessed = []
         
         documents = []
         
@@ -173,22 +175,27 @@ class IndexEngine():
                 continue
             
             #Skip the produced document and all unsupported files
-            if re.match(r".*/documents.txt$", paths) or re.match(r".*\.((css)|(xml)|(csv)|(png)|(jpg)|(pdf))", paths):
+            if re.match(r".*/documents.txt$", paths) or re.match(r".*\.((sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(pdf)|(xlsx))", paths):
+                if re.match(r".*\.((sql)|(json)|(xsd))", paths) :
+                    toBeProcessed.append(paths)
                 print("- ", paths)
                 continue
             
             try :
-                documents += loader.load_data(file=Path(paths))
+                documents += unstructuredLoader.load_data(file=Path(paths))
                 print("+ ", paths)
             except :
                 print("- ", paths)
                 print("Error loading file")
                 continue
+            
+        reader = SimpleDirectoryReader(input_files=toBeProcessed)
+        documents += reader.load_data()
         
         print("Filtering documents...")
         initial_size = sum(list(map(lambda x : len(x.text), documents)))
         for document in documents :
-            if document.text.__contains__("Problem authenticating") or document.text.__contains__("File Generator"):
+            if document.text.__contains__("Problem authenticating") or document.text.__contains__("File Generator") or document.text.__contains__("MIT P2P : Status & reporting") or documents.__contains__("Defects – digest"):
                 documents.remove(document)
                 continue
             
@@ -197,9 +204,13 @@ class IndexEngine():
             
             #remove all phone numbers
             document.text = re.sub(r"(\d{3}[-\.\s]??\d{3}[-\.\s]??\d{4}|\(\d{3}\)\s*\d{3}[-\.\s]??\d{4}|\d{3}[-\.\s]??\d{4})", "", document.text)
-
-            #remove all lines with less than 10 characters
-            document.text = "\n".join(list(filter(lambda x : (len(x) > 5 and len(x) < 5000), document.text.split("\n"))))
+            
+            #remove all lines line breaks bigger than two \n
+            document.text = re.sub(r"\n{3,}", "\n\n", document.text)
+            
+            if document.text == "" :
+                documents.remove(document)
+                continue
             
         t1 = time.time()
         
@@ -212,7 +223,7 @@ class IndexEngine():
         with open("examples/documents.txt", "w") as f:
             for document in documents:
                 f.write(document.text)
-                f.write("\n\n")
+                f.write("\n\n\n")
 
         print("Indexing...")
         
@@ -227,7 +238,7 @@ class IndexEngine():
         kg_index = KnowledgeGraphIndex.from_documents(
             documents,
             storage_context=storage_context,
-            max_triplets_per_chunk=10,
+            max_triplets_per_chunk=15,
             space_name=space_name,
             edge_types=edge_types,
             rel_prop_names=rel_prop_names,
@@ -264,8 +275,14 @@ class IndexEngine():
 
         # create custom retriever
         vector_retriever = VectorIndexRetriever(index=vector_index)
-        kg_retriever = KGTableRetriever(
-            index=kg_index, retriever_mode="keyword", include_text=False
+        kg_retriever = KnowledgeGraphRAGRetriever(
+            index=kg_index, 
+            retriever_mode="keyword", 
+            include_text=False,
+            service_context=self.service_context,
+            storage_context=storage_context,
+            verbose=True,
+            graph_traversal_depth=3
         )
         custom_retriever = CustomRetriever(vector_retriever, kg_retriever)
 

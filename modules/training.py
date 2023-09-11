@@ -594,8 +594,8 @@ def do_train(lora_name: str, always_override: bool, save_steps: int, micro_batch
 
     lora_model.config.use_cache = False
 
-    if torch.__version__ >= "2" and sys.platform != "win32":
-        lora_model = torch.compile(lora_model)
+    #if torch.__version__ >= "2" and sys.platform != "win32":
+    #    lora_model = torch.compile(lora_model)
 
     # == Save parameters for reuse ==
     with open(f"{lora_file_path}/training_parameters.json", 'w', encoding='utf-8') as file:
