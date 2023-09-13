@@ -216,7 +216,7 @@ def messages_to_prompt(body: dict, req_params: dict, max_tokens):
             raise InvalidRequestError(message="messages: missing role", param='messages')
         if 'content' not in m:
             raise InvalidRequestError(message="messages: missing content", param='messages')
-        
+
         role = m['role']
         content = m['content']
         # name = m.get('name', None)

@@ -23,7 +23,7 @@ from modules.logging_colors import logger
 from modules.models import clear_torch_cache, local_rank
 
 from modules.LlamaIndex import IndexEngine
-from llama_index.response.schema import Response, StreamingResponse
+
 
 def generate_reply(*args, **kwargs):
     shared.generation_lock.acquire()
@@ -44,7 +44,10 @@ def _generate_reply(question, state, stopping_strings=None, is_chat=False, escap
             yield ''
             return
 
-        if shared.model.__class__.__name__ in ['LlamaCppModel', 'RWKVModel', 'ExllamaModel', 'CtransformersModel']:
+        if shared.model.__class__.__name__ in ['LlamaCppModel',
+                                               'RWKVModel',
+                                               'ExllamaModel',
+                                               'CtransformersModel']:
             generate_func = generate_reply_custom
         else:
             generate_func = generate_reply_HF
@@ -58,7 +61,7 @@ def _generate_reply(question, state, stopping_strings=None, is_chat=False, escap
     # Find the stopping strings
     all_stop_strings = []
     for st in (stopping_strings, ast.literal_eval(f"[{state['custom_stopping_strings']}]")):
-        if type(st) is list and len(st) > 0:
+        if isinstance(type(st), list) and len(st) > 0:
             all_stop_strings += st
 
     if shared.args.verbose:
@@ -75,7 +78,9 @@ def _generate_reply(question, state, stopping_strings=None, is_chat=False, escap
         state['stream'] = True
 
     # Generate
-    for reply in generate_func(question, original_question, seed, state, stopping_strings, is_chat=is_chat):
+    for reply in generate_func(question, original_question,
+                                seed, state, stopping_strings,
+                                is_chat=is_chat):
         if escape_html:
             reply = html.escape(reply)
 
@@ -151,7 +156,7 @@ def get_max_prompt_length(state):
 
 def generate_reply_wrapper(question, state, stopping_strings=None):
     """
-    Returns formatted outputs for the UI
+    Returns formatted outputs for the UI.
     """
     reply = question if not shared.is_seq2seq else ''
     yield formatted_outputs(reply, shared.model_name)
@@ -173,7 +178,7 @@ def formatted_outputs(reply, model_name):
 
 def fix_gpt4chan(s):
     """
-    Removes empty replies from gpt4chan outputs
+    Removes empty replies from gpt4chan outputs.
     """
     for i in range(10):
         s = re.sub("--- [0-9]*\n>>[0-9]*\n---", "---", s)
@@ -185,7 +190,7 @@ def fix_gpt4chan(s):
 
 def fix_galactica(s):
     """
-    Fix the LaTeX equations in GALACTICA
+    Fix the LaTeX equations in GALACTICA.
     """
     s = s.replace(r'\[', r'$')
     s = s.replace(r'\]', r'$')
@@ -197,14 +202,18 @@ def fix_galactica(s):
     return s
 
 
-def get_reply_from_output_ids(output_ids, input_ids, original_question, state, is_chat=False):
+def get_reply_from_output_ids(output_ids, input_ids,
+                              original_question, state,
+                              is_chat=False):
     if shared.is_seq2seq:
         reply = decode(output_ids, state['skip_special_tokens'])
     else:
         new_tokens = len(output_ids) - len(input_ids[0])
         reply = decode(output_ids[-new_tokens:], state['skip_special_tokens'])
         # Prevent LlamaTokenizer from skipping a space
-        if type(shared.tokenizer) in [transformers.LlamaTokenizer, transformers.LlamaTokenizerFast] and len(output_ids) > 0:
+        if (type(shared.tokenizer) in [transformers.LlamaTokenizer,
+                                       transformers.LlamaTokenizerFast]
+                and len(output_ids) > 0):
             if shared.tokenizer.convert_ids_to_tokens(int(output_ids[-new_tokens])).startswith('▁'):
                 reply = ' ' + reply
 
@@ -252,9 +261,16 @@ def apply_stopping_strings(reply, all_stop_strings):
     return reply, stop_found
 
 
-def generate_reply_HF(question, original_question, seed, state, stopping_strings=None, is_chat=False):
+def generate_reply_HF(question, original_question, seed,
+                      state, stopping_strings=None, is_chat=False):
     generate_params = {}
-    for k in ['max_new_tokens', 'do_sample', 'temperature', 'top_p', 'typical_p', 'repetition_penalty', 'repetition_penalty_range', 'encoder_repetition_penalty', 'top_k', 'min_length', 'no_repeat_ngram_size', 'num_beams', 'penalty_alpha', 'length_penalty', 'early_stopping', 'tfs', 'top_a', 'mirostat_mode', 'mirostat_tau', 'mirostat_eta', 'guidance_scale']:
+    for k in ['max_new_tokens', 'do_sample', 'temperature',
+              'top_p', 'typical_p', 'repetition_penalty',
+              'repetition_penalty_range', 'encoder_repetition_penalty',
+              'top_k', 'min_length', 'no_repeat_ngram_size', 'num_beams',
+              'penalty_alpha', 'length_penalty', 'early_stopping', 'tfs',
+              'top_a', 'mirostat_mode', 'mirostat_tau', 'mirostat_eta',
+              'guidance_scale']:
         generate_params[k] = state[k]
 
     if state['negative_prompt'] != '':
@@ -286,7 +302,9 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
         generate_params.update({'inputs_embeds': inputs_embeds})
 
     # Stopping criteria / eos token
-    eos_token_ids = [shared.tokenizer.eos_token_id] if shared.tokenizer.eos_token_id is not None else []
+    eos_token_ids = ([shared.tokenizer.eos_token_id]
+                     if shared.tokenizer.eos_token_id is not None
+                     else [])
     generate_params['eos_token_id'] = eos_token_ids
     generate_params['stopping_criteria'] = transformers.StoppingCriteriaList()
     generate_params['stopping_criteria'].append(_StopEverythingStoppingCriteria())
@@ -305,15 +323,15 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
 
         # Generate the entire reply at once.
         if not state['stream']:
-            if shared.settings['use_llama_index'] :
+            if shared.settings['use_llama_index']:
                 with torch.no_grad():
-                    if shared.index is None :
+                    if shared.index is None:
                         shared.index = IndexEngine().querier(streaming=False)
                     resp = shared.index.engine.query(question)
                     yield resp.response + "\n" + resp.get_formatted_sources()
-                    
-            else :
-                
+
+            else:
+
                 with torch.no_grad():
                     output = shared.model.generate(**generate_params)[0]
                     if cuda:
@@ -326,18 +344,18 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
         else:
             if shared.settings['use_llama_index']:
                 with torch.no_grad():
-                    if shared.index is None :
+                    if shared.index is None:
                         shared.index = IndexEngine().querier(streaming=True)
-                    
+
                     stream_resp = shared.index.engine.query(question)
                     output = "Using sources : \n" + stream_resp.get_formatted_sources(30) + "\n"
-                    for part in stream_resp.response_gen :
+                    for part in stream_resp.response_gen:
                         output += part
                         yield output
                         if len(part) > 0 and part[-1] in eos_token_ids:
                             break
-            else :
-                
+            else:
+
                 def generate_with_callback(callback=None, *args, **kwargs):
                     kwargs['stopping_criteria'].append(Stream(callback_func=callback))
                     clear_torch_cache()
@@ -361,12 +379,13 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
         original_tokens = len(original_input_ids[0])
         new_tokens = len(output) - (original_tokens if not shared.is_seq2seq else 0)
         print(f'Output generated in {(t1-t0):.2f} seconds ({new_tokens/(t1-t0):.2f} tokens/s, {new_tokens} tokens, context {original_tokens}, seed {seed})')
-        return
+    return
 
 
-def generate_reply_custom(question, original_question, seed, state, stopping_strings=None, is_chat=False):
+def generate_reply_custom(question, original_question, seed,
+                          state, stopping_strings=None, is_chat=False):
     """
-    For models that do not use the transformers library for sampling
+    For models that do not use the transformers library for sampling.
     """
     seed = set_manual_seed(state['seed'])
 
@@ -389,5 +408,7 @@ def generate_reply_custom(question, original_question, seed, state, stopping_str
         t1 = time.time()
         original_tokens = len(encode(original_question)[0])
         new_tokens = len(encode(original_question + reply)[0]) - original_tokens
-        print(f'Output generated in {(t1-t0):.2f} seconds ({new_tokens/(t1-t0):.2f} tokens/s, {new_tokens} tokens, context {original_tokens}, seed {seed})')
-        return
+        print(f'Output generated in {(t1-t0):.2f} seconds\
+            ({new_tokens/(t1-t0):.2f} tokens/s, {new_tokens}\
+                tokens, context {original_tokens}, seed {seed})')
+    return

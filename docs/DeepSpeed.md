@@ -6,7 +6,7 @@ As far as I know, DeepSpeed is only available for Linux at the moment.
 
 ### How to use it
 
-1. Install DeepSpeed: 
+1. Install DeepSpeed:
 
 ```
 conda install -c conda-forge mpi4py mpich

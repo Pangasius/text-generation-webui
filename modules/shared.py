@@ -33,7 +33,7 @@ settings = {
     'show_controls': True,
     'start_with': '',
     'mode': 'chat',
-    'use_llama_index': True,
+    'use_llama_index': False,
     'chat_style': 'TheEncrypted777',
     'character': 'None',
     'prompt-default': 'QA',
@@ -187,6 +187,12 @@ parser.add_argument('--public-api-id', type=str, help='Tunnel ID for named Cloud
 
 # Multimodal
 parser.add_argument('--multimodal-pipeline', type=str, default=None, help='The multimodal pipeline to use. Examples: llava-7b, llava-13b.')
+
+# Lora training
+parser.add_argument('--lora-train', action='store_true', help='Train a LoRA.')
+
+# serverless
+parser.add_argument('--serverless', action='store_true', help='Enable serverless mode. This will disable the web UI.')
 
 args = parser.parse_args()
 args_defaults = parser.parse_args([])

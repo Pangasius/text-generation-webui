@@ -59,7 +59,7 @@
     /*Message gradient background color - remove the line bellow if you don't want a background color or gradient*/
     background: linear-gradient(to bottom, #171730, #1b263f);
 }
-  
+
   /*Adds 2 extra lines at the top and bottom of the message*/
 .message-body:before,
   .message-body:after {

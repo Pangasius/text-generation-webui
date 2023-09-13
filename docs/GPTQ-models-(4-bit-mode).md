@@ -128,7 +128,7 @@ Use the `--gptq-for-llama` flag.
 For the models converted without `group-size`:
 
 ```
-python server.py --model llama-7b-4bit --gptq-for-llama 
+python server.py --model llama-7b-4bit --gptq-for-llama
 ```
 
 For the models converted with `group-size`:

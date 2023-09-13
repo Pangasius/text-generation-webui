@@ -22,7 +22,7 @@ docker compose up --build
 * [Docker Compose installation instructions](#docker-compose-installation-instructions)
 * [Repository with additional Docker files](#dedicated-docker-repository)
 
-# Docker Compose installation instructions 
+# Docker Compose installation instructions
 
 By [@loeken](https://github.com/loeken).
 
@@ -86,7 +86,7 @@ newgrp docker
 ```bash
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
 echo "deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://nvidia.github.io/libnvidia-container/stable/ubuntu22.04/amd64 /" | \
-sudo tee /etc/apt/sources.list.d/nvidia.list > /dev/null 
+sudo tee /etc/apt/sources.list.d/nvidia.list > /dev/null
 sudo apt update
 sudo apt install nvidia-docker2 nvidia-container-runtime -y
 sudo systemctl restart docker

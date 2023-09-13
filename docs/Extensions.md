@@ -36,7 +36,7 @@ The extensions framework is based on special functions and variables that you ca
 | Function        | Description |
 |-------------|-------------|
 | `def setup()` | Is executed when the extension gets imported. |
-| `def ui()` | Creates custom gradio elements when the UI is launched. | 
+| `def ui()` | Creates custom gradio elements when the UI is launched. |
 | `def custom_css()` | Returns custom CSS as a string. It is applied whenever the web UI is loaded. |
 | `def custom_js()` | Same as above but for javascript. |
 | `def input_modifier(string, state, is_chat=False)`  | Modifies the input string before it enters the model. In chat mode, it is applied to the user message. Otherwise, it is applied to the entire prompt. |
@@ -75,13 +75,13 @@ can be customized by adding a key called `google_translate-language string` to `
 
 ```python
 google_translate-language string: 'fr'
-``` 
+```
 
 That is, the syntax for the key is `extension_name-variable_name`.
 
 ## Using multiple extensions at the same time
 
-You can activate more than one extension at a time by providing their names separated by spaces after `--extensions`. The input, output, and bot prefix modifiers will be applied in the specified order. 
+You can activate more than one extension at a time by providing their names separated by spaces after `--extensions`. The input, output, and bot prefix modifiers will be applied in the specified order.
 
 Example:
 
@@ -95,7 +95,7 @@ Do note, that for:
 - `custom_generate_reply`
 - `custom_tokenized_length`
 
-only the first declaration encountered will be used and the rest will be ignored. 
+only the first declaration encountered will be used and the rest will be ignored.
 
 ## A full example
 

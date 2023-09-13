@@ -68,13 +68,13 @@ python server.py --chat
 
 2. Click on the "instruct" option under "Chat modes"
 
-3. Select the correct template in the hidden dropdown menu that will become visible. 
+3. Select the correct template in the hidden dropdown menu that will become visible.
 
 #### Notebook mode is best mode
 
 Ascended individuals have realized that notebook mode is the superset of chat mode and can do chats with ultimate flexibility, including group chats, editing replies, starting a new bot reply in a given way, and impersonating.
 
-#### RWKV is a RNN 
+#### RWKV is a RNN
 
 Most models are transformers, but not RWKV, which is a RNN. It's a great model.
 

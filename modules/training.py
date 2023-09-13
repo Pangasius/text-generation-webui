@@ -1,13 +1,7 @@
-import os
-
-os.environ["WANDB_MODE"] = "offline"
-# os.environ["WANDB_DISABLED"] = "true"
-
 import json
 import math
 import random
 import shutil
-import sys
 import threading
 import time
 import traceback
@@ -39,6 +33,11 @@ from modules.evaluate import (
 from modules.logging_colors import logger
 from modules.models import reload_model
 from modules.utils import natural_keys
+
+import os
+
+os.environ["WANDB_MODE"] = "offline"
+# os.environ["WANDB_DISABLED"] = "true"
 
 MODEL_CLASSES = {v[1]: v[0] for v in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.items()}
 PARAMETERS = ["lora_name", "always_override", "save_steps", "micro_batch_size", "batch_size", "epochs", "learning_rate", "lr_scheduler_type", "lora_rank", "lora_alpha", "lora_dropout", "cutoff_len", "dataset", "eval_dataset", "format", "eval_steps", "raw_text_file", "overlap_len", "newline_favor_len", "higher_rank_limit", "warmup_steps", "optimizer", "hard_cut_string", "train_only_after", "stop_at_loss", "add_eos_token", "min_chars", "report_to"]
@@ -266,7 +265,22 @@ def calc_trainable_parameters(model):
     return trainable_params, all_param
 
 
+def do_auto_train():
+    print("Training LoRA...")
+    # load the parameters from training/params.json
+    with open('training/params.json') as f:
+        params = json.load(f)
+
+    params = list(params.values())
+    # train the model
+
+    for response in do_train(*params):
+        print(response)
+
+
 def do_train(lora_name: str, always_override: bool, save_steps: int, micro_batch_size: int, batch_size: int, epochs: int, learning_rate: str, lr_scheduler_type: str, lora_rank: int, lora_alpha: int, lora_dropout: float, cutoff_len: int, dataset: str, eval_dataset: str, format: str, eval_steps: int, raw_text_file: str, overlap_len: int, newline_favor_len: int, higher_rank_limit: bool, warmup_steps: int, optimizer: str, hard_cut_string: str, train_only_after: str, stop_at_loss: float, add_eos_token: bool, min_chars: int, report_to: str):
+
+    print("Training LoRA...")
 
     if shared.args.monkey_patch:
         from alpaca_lora_4bit.monkeypatch.peft_tuners_lora_monkey_patch import (

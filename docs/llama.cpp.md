@@ -20,9 +20,9 @@ Follow the instructions in the llama.cpp README to generate a GGUF: https://gith
 
 ## GPU acceleration
 
-Enabled with the `--n-gpu-layers` parameter. 
+Enabled with the `--n-gpu-layers` parameter.
 
-* If you have enough VRAM, use a high number like `--n-gpu-layers 1000` to offload all layers to the GPU. 
+* If you have enough VRAM, use a high number like `--n-gpu-layers 1000` to offload all layers to the GPU.
 * Otherwise, start with a low number like `--n-gpu-layers 10` and then gradually increase it until you run out of memory.
 
 This feature works out of the box for NVIDIA GPUs on Linux (amd64) or Windows. For other GPUs, you need to uninstall `llama-cpp-python` with

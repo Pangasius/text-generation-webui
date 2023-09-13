@@ -73,7 +73,7 @@ conda activate textgen
 | Windows | NVIDIA | `pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117` |
 | Windows | CPU only | `pip3 install torch torchvision torchaudio` |
 
-The up-to-date commands can be found here: https://pytorch.org/get-started/locally/. 
+The up-to-date commands can be found here: https://pytorch.org/get-started/locally/.
 
 #### 3. Install the web UI
 
@@ -92,7 +92,7 @@ pip install -r requirements_nocuda.txt
 ```
 
 2) Manually install llama-cpp-python using the appropriate command for your hardware: [Installation from PyPI](https://github.com/abetlen/llama-cpp-python#installation-from-pypi).
-   
+
 3) Do the same for CTransformers: [Installation](https://github.com/marella/ctransformers#installation).
 
 4) AMD: Manually install AutoGPTQ: [Installation](https://github.com/PanQiWei/AutoGPTQ#installation).
@@ -206,7 +206,7 @@ When you load this model in default or notebook modes, the "HTML" tab will show 
     cd text-generation-webui
     python server.py
 
-Then browse to 
+Then browse to
 
 `http://localhost:7860/?__theme=dark`
 

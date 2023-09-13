@@ -70,12 +70,12 @@ sudo apt install build-essential
 
 If you face any issues or need to troubleshoot, you can always refer to the official Microsoft documentation for WSL: https://docs.microsoft.com/en-us/windows/wsl/
 
-#### WSL2 performance using /mnt: 
+#### WSL2 performance using /mnt:
 when you git clone a repository, put it inside WSL and not outside. To understand more, take a look at this [issue](https://github.com/microsoft/WSL/issues/4197#issuecomment-604592340)
 
 ## Bonus: Port Forwarding
 
-By default, you won't be able to access the webui from another device on your local network. You will need to setup the appropriate port forwarding using the following command (using PowerShell or Terminal with administrator privileges). 
+By default, you won't be able to access the webui from another device on your local network. You will need to setup the appropriate port forwarding using the following command (using PowerShell or Terminal with administrator privileges).
 
 ```
 netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=7860 connectaddress=localhost connectport=7860

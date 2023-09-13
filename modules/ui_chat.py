@@ -57,7 +57,7 @@ def create_ui():
         with gr.Row():
             shared.gradio['mode'] = gr.Radio(choices=['chat', 'chat-instruct', 'instruct'], value=shared.settings['mode'] if shared.settings['mode'] in ['chat', 'instruct', 'chat-instruct'] else 'chat', label='Mode', info='Defines how the chat prompt is generated. In instruct and chat-instruct modes, the instruction template selected under Parameters > Instruction template must match the current model.', elem_id='chat-mode')
             shared.gradio['chat_style'] = gr.Dropdown(choices=utils.get_available_chat_styles(), label='Chat style', value=shared.settings['chat_style'], visible=shared.settings['mode'] != 'instruct')
-            
+
         with gr.Row():
             shared.gradio['use_llama_index'] = gr.Checkbox(value=shared.settings['use_llama_index'], label='Use Llama index', info='If checked, the Llama index will be used to generate the chat prompt. If unchecked, the default index will be used.')
 
@@ -221,7 +221,7 @@ def create_event_handlers():
     shared.gradio['mode'].change(
         lambda x: gr.update(visible=x != 'instruct'), gradio('mode'), gradio('chat_style'), show_progress=False).then(
         chat.redraw_html, gradio(reload_arr), gradio('display'))
-        
+
     shared.gradio['use_llama_index'].change(
         lambda x: shared.settings.update(use_llama_index=x), gradio('use_llama_index'), None, show_progress=False).then(chat.redraw_html, gradio(reload_arr), gradio('display'))
 

@@ -2,7 +2,7 @@
 
 This extension creates an API that works kind of like openai (ie. api.openai.com).
 
-## Setup & installation 
+## Setup & installation
 
 Install the requirements:
 ```
@@ -84,7 +84,7 @@ Warning: Loaded default instruction-following template for model.
 
 Embeddings requires ```sentence-transformers``` installed, but chat and completions will function without it loaded. The embeddings endpoint is currently using the HuggingFace model: ```sentence-transformers/all-mpnet-base-v2``` for embeddings. This produces 768 dimensional embeddings (the same as the text-davinci-002 embeddings), which is different from OpenAI's current default ```text-embedding-ada-002``` model which produces 1536 dimensional embeddings. The model is small-ish and fast-ish. This model and embedding size may change in the future.
 
-| model name | dimensions | input max tokens | speed | size | Avg. performance | 
+| model name | dimensions | input max tokens | speed | size | Avg. performance |
 | --- | --- | --- | --- | --- | --- |
 | text-embedding-ada-002 | 1536 | 8192| - | - | - |
 | text-davinci-002 | 768 | 2046 | - | - | - |

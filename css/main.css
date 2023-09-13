@@ -390,19 +390,19 @@ div.svelte-362y77>*, div.svelte-362y77>.form>* {
         width: 100%;
         overflow-y: visible;
     }
-    
+
     .message {
         break-inside: avoid;
     }
-    
+
     .gradio-container {
         overflow: visible;
     }
-    
+
     .tab-nav {
         display: none !important;
     }
-    
+
     #chat-tab > :first-child {
         max-width: unset;
     }

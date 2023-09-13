@@ -4,15 +4,10 @@ import warnings
 from modules.logging_colors import logger
 from modules.block_requests import OpenMonkeyPatch, RequestBlocker
 
-os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
-os.environ['BITSANDBYTES_NOWELCOME'] = '1'
-warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
-
 with RequestBlocker():
     import gradio as gr
 
 import matplotlib
-matplotlib.use('Agg')  # This fixes LaTeX rendering on some systems
 
 import json
 import os
@@ -48,6 +43,12 @@ from modules.models_settings import (
 )
 from modules.utils import gradio
 
+matplotlib.use('Agg')  # This fixes LaTeX rendering on some systems
+
+os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
+os.environ['BITSANDBYTES_NOWELCOME'] = '1'
+warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
+
 
 def create_interface():
 
@@ -70,7 +71,7 @@ def create_interface():
     shared.persistent_interface_state.update({
         'loader': shared.args.loader or 'Transformers',
         'mode': shared.settings['mode'],
-        'use_llama_index' : shared.settings['use_llama_index'],
+        'use_llama_index': shared.settings['use_llama_index'],
         'character_menu': shared.args.character or shared.settings['character'],
         'instruction_template': shared.settings['instruction_template'],
         'prompt_menu-default': shared.settings['prompt-default'],
@@ -142,11 +143,15 @@ def create_interface():
         shared.gradio['interface'].launch(
             prevent_thread_lock=True,
             share=shared.args.share,
-            server_name=None if not shared.args.listen else (shared.args.listen_host or '0.0.0.0'),
+            server_name=(None
+                         if not shared.args.listen
+                         else (shared.args.listen_host or '0.0.0.0')),
             server_port=shared.args.listen_port,
             inbrowser=shared.args.auto_launch,
             auth=auth or None,
-            ssl_verify=False if (shared.args.ssl_keyfile or shared.args.ssl_certfile) else True,
+            ssl_verify=(False
+                        if (shared.args.ssl_keyfile or shared.args.ssl_certfile)
+                        else True),
             ssl_keyfile=shared.args.ssl_keyfile,
             ssl_certfile=shared.args.ssl_certfile
         )
@@ -166,7 +171,9 @@ if __name__ == "__main__":
     if settings_file is not None:
         logger.info(f"Loading settings from {settings_file}...")
         file_contents = open(settings_file, 'r', encoding='utf-8').read()
-        new_settings = json.loads(file_contents) if settings_file.suffix == "json" else yaml.safe_load(file_contents)
+        new_settings = (json.loads(file_contents)
+                        if settings_file.suffix == "json"
+                        else yaml.safe_load(file_contents))
         shared.settings.update(new_settings)
 
     # Fallback settings for models
@@ -199,14 +206,16 @@ if __name__ == "__main__":
     # Select the model from a command-line menu
     elif shared.args.model_menu:
         if len(available_models) == 0:
-            logger.error('No models are available! Please download at least one.')
+            logger.error('No models are available!\
+                Please download at least one.')
             sys.exit(0)
         else:
             print('The following models are available:\n')
             for i, model in enumerate(available_models):
                 print(f'{i+1}. {model}')
 
-            print(f'\nWhich one do you want to load? 1-{len(available_models)}\n')
+            print(f'\nWhich one do you want to load?\
+                1-{len(available_models)}\n')
             i = int(input()) - 1
             print()
 
@@ -223,7 +232,13 @@ if __name__ == "__main__":
         if shared.args.lora:
             add_lora_to_model(shared.args.lora)
 
+    if shared.args.lora_train:
+        training.do_auto_train()
+
     shared.generation_lock = Lock()
+
+    if shared.args.serverless:
+        exit(0)
 
     # Launch the web UI
     create_interface()

@@ -48,6 +48,6 @@ body:
       label: System Info
       description: "Please share your system info with us: operating system, GPU brand, and GPU model. If you are using a Google Colab notebook, mention that instead."
       render: shell
-      placeholder: 
+      placeholder:
     validations:
       required: true

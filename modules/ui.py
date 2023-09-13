@@ -8,15 +8,20 @@ import yaml
 from modules import shared
 
 
-with open(Path(__file__).resolve().parent / '../css/main.css', 'r') as f:
+with open(Path(__file__).resolve().parent /
+          '../css/main.css', 'r') as f:
     css = f.read()
-with open(Path(__file__).resolve().parent / '../js/main.js', 'r') as f:
+with open(Path(__file__).resolve().parent /
+          '../js/main.js', 'r') as f:
     js = f.read()
-with open(Path(__file__).resolve().parent / '../js/save_files.js', 'r') as f:
+with open(Path(__file__).resolve().parent /
+          '../js/save_files.js', 'r') as f:
     save_files_js = f.read()
-with open(Path(__file__).resolve().parent / '../js/switch_tabs.js', 'r') as f:
+with open(Path(__file__).resolve().parent /
+          '../js/switch_tabs.js', 'r') as f:
     switch_tabs_js = f.read()
-with open(Path(__file__).resolve().parent / '../js/show_controls.js', 'r') as f:
+with open(Path(__file__).resolve().parent /
+          '../js/show_controls.js', 'r') as f:
     show_controls_js = f.read()
 
 refresh_symbol = '🔄'
@@ -34,7 +39,8 @@ theme = gr.themes.Default(
 )
 
 if Path("notification.mp3").exists():
-    audio_notification_js = "document.querySelector('#audio_notification audio')?.play();"
+    audio_notification_js = "document.querySelector\
+        ('#audio_notification audio')?.play();"
 else:
     audio_notification_js = ""
 
@@ -182,9 +188,12 @@ def apply_interface_values(state, use_persistent=False):
         return [state[k] if k in state else gr.update() for k in elements]
 
 
-def save_settings(state, preset, instruction_template, extensions, show_controls):
+def save_settings(state, preset, instruction_template,
+                  extensions, show_controls):
     output = copy.deepcopy(shared.settings)
-    exclude = ['name1', 'name2', 'greeting', 'context', 'turn_template']
+    exclude = ['name1', 'name2',
+               'greeting', 'context',
+               'turn_template']
     for k in state:
         if k in shared.settings and k not in exclude:
             output[k] = state[k]
@@ -203,8 +212,8 @@ def save_settings(state, preset, instruction_template, extensions, show_controls
 
 class ToolButton(gr.Button, gr.components.IOComponent):
     """
-    Small button with single emoji as text, fits inside gradio forms
-    Copied from https://github.com/AUTOMATIC1111/stable-diffusion-webui
+    Small button with single emoji as text, fits inside gradio forms.
+    Copied from https://github.com/AUTOMATIC1111/stable-diffusion-webui.
     """
 
     def __init__(self, **kwargs):
@@ -214,9 +223,11 @@ class ToolButton(gr.Button, gr.components.IOComponent):
         return "button"
 
 
-def create_refresh_button(refresh_component, refresh_method, refreshed_args, elem_class):
+def create_refresh_button(refresh_component, refresh_method,
+                          refreshed_args, elem_class):
     """
-    Copied from https://github.com/AUTOMATIC1111/stable-diffusion-webui
+    Refresh button for gradio forms.
+    Copied from https://github.com/AUTOMATIC1111/stable-diffusion-webui.
     """
     def refresh():
         refresh_method()
