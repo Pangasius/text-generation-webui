@@ -12,6 +12,7 @@ from zipfile import ZipFile
 import pytesseract
 
 from llama_index import (
+    Document,
     StorageContext,
     VectorStoreIndex,
     download_loader,
@@ -33,6 +34,19 @@ from llama_index.retrievers import (
     BaseRetriever,
     VectorIndexRetriever,
     KnowledgeGraphRAGRetriever
+)
+
+from llama_index.node_parser import SimpleNodeParser
+
+from llama_index.finetuning import EmbeddingAdapterFinetuneEngine
+
+from llama_index.embeddings import (
+    resolve_embed_model,
+    LinearAdapterEmbeddingModel
+)
+
+from llama_index.finetuning.embeddings.common import (
+    generate_qa_embedding_pairs
 )
 
 import modules.shared as shared
@@ -108,27 +122,30 @@ class CustomRetriever(BaseRetriever):
 
 class IndexEngine():
     def __init__(self):
-        prompt_helper = PromptHelper(tokenizer=shared.tokenizer)
-
         print("Loading model...")
 
-        llm = HuggingFaceLLM(model=shared.model,
+        self.llm = HuggingFaceLLM(model=shared.model,
                              tokenizer=shared.tokenizer,
                              max_new_tokens=shared.settings['max_new_tokens'],
                              context_window=shared.args.n_ctx)
-        embedder = "local:BAAI/bge-large-en"  # Embedding()
-        self.service_context = ServiceContext.\
-            from_defaults(llm=llm,
-                          embed_model=embedder,
-                          prompt_helper=prompt_helper,
-                          chunk_size=128,
-                          context_window=min(128, shared.args.n_ctx))
 
         self.engine = None
 
         print("Model loaded")
 
-    def index_files(self):
+    def get_service_context(self, embed_model="local:BAAI/bge-large-en") :
+        prompt_helper = PromptHelper(tokenizer=shared.tokenizer)
+
+        service_context = ServiceContext.\
+            from_defaults(llm=self.llm,
+                          embed_model=embed_model,
+                          prompt_helper=prompt_helper,
+                          chunk_size=128,
+                          context_window=min(128, shared.args.n_ctx))
+
+        return service_context
+
+    def parse_documents(self):
         print("Indexing documents...")
 
         t0 = time.time()
@@ -145,7 +162,7 @@ class IndexEngine():
         print("Files...")
 
         print("Unzipping and converting files...")
-        #first unzip all zip files and turn all pdf files into docx files
+        # first unzip all zip files and turn all pdf files into docx files
         for paths in glob.glob("./examples/**/*", recursive=True):
             try:
                 if re.match(r".*\.zip$", paths):
@@ -228,6 +245,13 @@ class IndexEngine():
 
         print("Indexing...")
 
+        return documents
+
+    def index_documents(self, documents: List[Document],
+                        embed_model="local:BAAI/bge-large-en"):
+
+        service_context = self.get_service_context(embed_model=embed_model)
+
         graph_store = NebulaGraphStore(
             space_name=space_name,
             edge_types=edge_types,
@@ -245,13 +269,13 @@ class IndexEngine():
             rel_prop_names=rel_prop_names,
             tags=tags,
             include_embeddings=True,
-            service_context=self.service_context,
+            service_context=service_context,
             show_progress=True,
         )
 
         vector_index = VectorStoreIndex.from_documents(
             documents=documents,
-            service_context=self.service_context)
+            service_context=service_context)
 
         # writing to disk
 
@@ -260,22 +284,70 @@ class IndexEngine():
 
         print("Indexing complete")
 
-        return self
+        return service_context
 
-    def as_query_engine(self, streaming=True):
+    def fine_tune(self, docs: List[Document],
+                  out_path="models/embedder/mig6-v1"):
+        # generate a finetuning qa dataset
+        print("Generating finetuning dataset...")
+
+        parser = SimpleNodeParser.from_defaults()
+        nodes = parser.get_nodes_from_documents(docs, show_progress=True)
+
+        val_nodes = nodes[::5]
+        train_nodes = [n for n in nodes if n not in val_nodes]
+
+        val_dataset = generate_qa_embedding_pairs(val_nodes,
+                                                  llm=self.llm)
+        train_dataset = generate_qa_embedding_pairs(train_nodes,
+                                                    llm=self.llm)
+
+        val_dataset.save_json("examples/val_pairs.json")
+        train_dataset.save_json("examples/train_pairs.json")
+
+        # [Optional] Load
+        # train_dataset = EmbeddingQAFinetuneDataset.from_json("train_dataset.json")
+        # val_dataset = EmbeddingQAFinetuneDataset.from_json("val_dataset.json")
+
+        base_embed_model = resolve_embed_model("local:BAAI/bge-large-en")
+
+        finetune_engine = EmbeddingAdapterFinetuneEngine(
+            train_dataset,
+            base_embed_model,
+            model_output_path=out_path,
+            # bias=True,
+            epochs=4,
+            verbose=True,
+            # optimizer_class=torch.optim.SGD,
+            # optimizer_params={"lr": 0.01}
+        )
+
+        finetune_engine.finetune()
+
+        return LinearAdapterEmbeddingModel(base_embed_model,
+                                           out_path)
+
+    def as_query_engine(self, streaming=True, embed_model="local:BAAI/bge-large-en"):
 
         # count the files in index and if there are none, index the files
         if (len(list(Path("index/vector").glob("*"))) == 0
                 or len(list(Path("index/kg").glob("*"))) == 0):
-            self.index_files()
+            documents = self.parse_documents()
+            embed_model = self.fine_tune(docs=documents)
+            service_context = self.index_documents(documents=documents,
+                                                   embed_model=embed_model)
+        else:
+            service_context = self.get_service_context(embed_model=embed_model)
 
         print("Loading engine...")
 
         storage_context = StorageContext.from_defaults(persist_dir="index/vector")
-        vector_index = load_index_from_storage(storage_context, service_context=self.service_context)
+        vector_index = load_index_from_storage(storage_context,
+                                               service_context=service_context)
 
         storage_context = StorageContext.from_defaults(persist_dir="index/kg")
-        kg_index = load_index_from_storage(storage_context, service_context=self.service_context)
+        kg_index = load_index_from_storage(storage_context,
+                                           service_context=service_context)
 
         # create custom retriever
         vector_retriever = VectorIndexRetriever(index=vector_index)
@@ -283,7 +355,7 @@ class IndexEngine():
             index=kg_index,
             retriever_mode="keyword",
             include_text=False,
-            service_context=self.service_context,
+            service_context=service_context,
             storage_context=storage_context,
             verbose=True,
             graph_traversal_depth=3
@@ -292,7 +364,7 @@ class IndexEngine():
 
         # create response synthesizer
         response_synthesizer = get_response_synthesizer(
-            service_context=self.service_context,
+            service_context=service_context,
             response_mode="tree_summarize",
             streaming=streaming
         )

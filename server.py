@@ -1,4 +1,5 @@
 import warnings
+from modules.LlamaIndex import IndexEngine
 
 from modules.block_requests import OpenMonkeyPatch, RequestBlocker
 from modules.logging_colors import logger
@@ -230,11 +231,13 @@ if __name__ == "__main__":
 
     if shared.args.lora_train:
         training.do_auto_train()
+        exit(0)
+
+    if shared.args.fine_tune_llama_index:
+        IndexEngine().as_query_engine()
+        exit(0)
 
     shared.generation_lock = Lock()
-
-    if shared.args.serverless:
-        exit(0)
 
     # Launch the web UI
     create_interface()

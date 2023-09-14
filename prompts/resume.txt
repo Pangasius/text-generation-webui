@@ -1,0 +1,12 @@
+Ci-dessous est décrite une tâche (Intruction), avec une entrée (Input) donnant plus de context. Écris une réponse (Response) qui satisfait la tâche.
+
+### Instruction:
+Résume le contexte donné en input sous la forme d'une question qui peut être comprise sans référer au contexte et d'une réponse. La réponse à la question devrait être le résumé. 
+Si aucune information n'est utilisable, répondre (Q:NO \n A:NO).
+La question devrait faire entre 50 et 70 mots. La réponse entre 150 et 200 mots.
+
+### Input:
+{context}
+
+### Response:
+Q:

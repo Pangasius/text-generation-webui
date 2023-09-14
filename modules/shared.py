@@ -166,6 +166,7 @@ parser.add_argument('--compress_pos_emb', type=int, default=1, help="Positional 
 
 # LLamaIndex
 parser.add_argument('--use-llama-index', action='store_true', help='Use llama index for faster inference.')
+parser.add_argument('--fine-tune-llama-index', action='store_true', help='Fine-tune the llama index on the fly.')
 
 # Gradio
 parser.add_argument('--listen', action='store_true', help='Make the web UI reachable from your local network.')
@@ -190,9 +191,6 @@ parser.add_argument('--multimodal-pipeline', type=str, default=None, help='The m
 
 # Lora training
 parser.add_argument('--lora-train', action='store_true', help='Train a LoRA.')
-
-# serverless
-parser.add_argument('--serverless', action='store_true', help='Enable serverless mode. This will disable the web UI.')
 
 args = parser.parse_args()
 args_defaults = parser.parse_args([])

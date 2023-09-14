@@ -36,7 +36,7 @@ from modules.utils import natural_keys
 
 import os
 
-os.environ["WANDB_MODE"] = "offline"
+os.environ["WANDB_MODE"] = "online"
 # os.environ["WANDB_DISABLED"] = "true"
 
 MODEL_CLASSES = {v[1]: v[0] for v in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.items()}
