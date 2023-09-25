@@ -78,7 +78,7 @@ if __name__ == '__main__':
     # timestamp for differentiating files
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
-    with open(f'examples/resume_{timestamp}.txt', mode="w") as f:
+    with open(f'examples/private/resume_{timestamp}.txt', mode="w") as f:
         for context in contexts:
             for repeat in range(4):
                 prompt = build_prompt(context, prompt_base)

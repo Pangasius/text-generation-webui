@@ -7,7 +7,7 @@ import time
 import os
 from typing import List
 
-from pdf2docx import Converter
+# from pdf2docx import Converter
 from zipfile import ZipFile
 import pytesseract
 
@@ -45,8 +45,13 @@ from llama_index.embeddings import (
     LinearAdapterEmbeddingModel
 )
 
+from llama_index.embeddings.adapter_utils import (
+    TwoLayerNN
+)
+
 from llama_index.finetuning.embeddings.common import (
-    generate_qa_embedding_pairs
+    generate_qa_embedding_pairs,
+    EmbeddingQAFinetuneDataset
 )
 
 import modules.shared as shared
@@ -78,6 +83,13 @@ edge_types, rel_prop_names = ["relationship"], [
 ]  # default, could be omit if create from an empty kg
 tags = ["entity"]  # default, could be omit if create from an empty kg
 
+adapter_model = TwoLayerNN(
+    1024,  # input dimension
+    1024,  # hidden dimension
+    1024,  # output dimension
+    bias=True,
+    add_residual=True,
+)
 
 class CustomRetriever(BaseRetriever):
     """
@@ -133,7 +145,7 @@ class IndexEngine():
 
         print("Model loaded")
 
-    def get_service_context(self, embed_model="local:BAAI/bge-large-en") :
+    def get_service_context(self, embed_model="local:BAAI/bge-large-en-v1.5") :
         prompt_helper = PromptHelper(tokenizer=shared.tokenizer)
 
         service_context = ServiceContext.\
@@ -185,13 +197,13 @@ class IndexEngine():
 
         print("Unstructured reading files...")
         for paths in glob.glob("./examples/**/*.*", recursive=True):
-            if not re.match(r".*\.[a-z]{1,10}$", paths) or re.match(r".*(((I|i)con(s)?)|(\.graffle)|(MACOSX)|(\/out)|(\/bin))\/.*", paths):
+            if re.match(r".*/private/.*$", paths) or not re.match(r".*\.[a-z]{1,10}$", paths) or re.match(r".*(((I|i)con(s)?)|(\.graffle)|(MACOSX)|(\/out)|(\/bin))\/.*", paths):
                 print("- ", paths)
                 continue
 
             # Skip the produced document and all unsupported files
-            if re.match(r".*/documents.txt$", paths) or re.match(r".*\.((sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(pdf)|(xlsx))", paths):
-                if re.match(r".*\.((sql)|(json)|(xsd))", paths):
+            if re.match(r".*\.((sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(pdf)|(xlsx))", paths):
+                if re.match(r".*\.((sql)|(xsd))", paths):
                     toBeProcessed.append(paths)
                 print("- ", paths)
                 continue
@@ -224,7 +236,7 @@ class IndexEngine():
             document.text = re.sub(r"(\d{3}[-\.\s]??\d{3}[-\.\s]??\d{4}|\(\d{3}\)\s*\d{3}[-\.\s]??\d{4}|\d{3}[-\.\s]??\d{4})", "", document.text)
 
             # remove all lines line breaks bigger than two \n
-            document.text = re.sub(r"\n{3,}", "\n\n", document.text)
+            document.text = re.sub(r"\n{2,}", "\n", document.text)
 
             if document.text == "":
                 documents.remove(document)
@@ -238,7 +250,7 @@ class IndexEngine():
         print("Final size:", sum(list(map(lambda x: len(x.text), documents))))
 
         # save all documents to a file
-        with open("examples/documents.txt", "w") as f:
+        with open("examples/private/documents.txt", "w") as f:
             for document in documents:
                 f.write(document.text)
                 f.write("\n\n\n")
@@ -248,7 +260,7 @@ class IndexEngine():
         return documents
 
     def index_documents(self, documents: List[Document],
-                        embed_model="local:BAAI/bge-large-en"):
+                        embed_model="local:BAAI/bge-large-en-v1.5"):
 
         service_context = self.get_service_context(embed_model=embed_model)
 
@@ -291,32 +303,37 @@ class IndexEngine():
         # generate a finetuning qa dataset
         print("Generating finetuning dataset...")
 
-        parser = SimpleNodeParser.from_defaults()
-        nodes = parser.get_nodes_from_documents(docs, show_progress=True)
+        base_embed_model = resolve_embed_model("local:BAAI/bge-large-en-v1.5")
 
-        val_nodes = nodes[::5]
-        train_nodes = [n for n in nodes if n not in val_nodes]
+        if os.path.exists(out_path):
+            return LinearAdapterEmbeddingModel(base_embed_model,
+                                               out_path)
 
-        val_dataset = generate_qa_embedding_pairs(val_nodes,
-                                                  llm=self.llm)
-        train_dataset = generate_qa_embedding_pairs(train_nodes,
-                                                    llm=self.llm)
+        dataset_path = "examples/private/dataset.json"
 
-        val_dataset.save_json("examples/val_pairs.json")
-        train_dataset.save_json("examples/train_pairs.json")
+        if not os.path.exists(dataset_path):
+            parser = SimpleNodeParser.from_defaults()
+            nodes = parser.get_nodes_from_documents(docs, show_progress=True)
+
+            dataset = generate_qa_embedding_pairs(nodes,
+                                                  llm=self.llm,
+                                                  num_questions_per_chunk=1)
+
+            dataset.save_json(dataset_path)
+        else:
+            dataset = EmbeddingQAFinetuneDataset.from_json(dataset_path)
 
         # [Optional] Load
-        # train_dataset = EmbeddingQAFinetuneDataset.from_json("train_dataset.json")
-        # val_dataset = EmbeddingQAFinetuneDataset.from_json("val_dataset.json")
-
-        base_embed_model = resolve_embed_model("local:BAAI/bge-large-en")
+        # dataset = EmbeddingQAFinetuneDataset.from_json("dataset.json")
 
         finetune_engine = EmbeddingAdapterFinetuneEngine(
-            train_dataset,
+            dataset,
             base_embed_model,
             model_output_path=out_path,
             # bias=True,
-            epochs=4,
+            dim=1024,
+            epochs=1,
+            batch_size=12,
             verbose=True,
             # optimizer_class=torch.optim.SGD,
             # optimizer_params={"lr": 0.01}
@@ -327,7 +344,7 @@ class IndexEngine():
         return LinearAdapterEmbeddingModel(base_embed_model,
                                            out_path)
 
-    def as_query_engine(self, streaming=True, embed_model="local:BAAI/bge-large-en"):
+    def as_query_engine(self, streaming=True, embed_model="local:BAAI/bge-large-en-v1.5"):
 
         # count the files in index and if there are none, index the files
         if (len(list(Path("index/vector").glob("*"))) == 0

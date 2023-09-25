@@ -1,0 +1,4 @@
+sudo apt-get install libreoffice
+conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia
+conda install -c conda-forge regex pytesseract gradio markdown transformers accelerate datasets scipy sentencepiece protobuf sentence-transformers
+pip install llama-index llama-hub pdf2docx peft bitsandbytes "unstructured[all-docs]" nebula3-python
