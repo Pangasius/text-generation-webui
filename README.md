@@ -30,15 +30,35 @@ To learn how to use the various features, check out the Documentation: https://g
 
 ### One-click installers
 
-| Windows | Linux | macOS | WSL |
-|--------|--------|--------|--------|
-| [oobabooga-windows.zip](https://github.com/oobabooga/text-generation-webui/releases/download/installers/oobabooga_windows.zip) | [oobabooga-linux.zip](https://github.com/oobabooga/text-generation-webui/releases/download/installers/oobabooga_linux.zip) |[oobabooga-macos.zip](https://github.com/oobabooga/text-generation-webui/releases/download/installers/oobabooga_macos.zip) | [oobabooga-wsl.zip](https://github.com/oobabooga/text-generation-webui/releases/download/installers/oobabooga_wsl.zip) |
+1) Clone or download the repository.
+2) Run the `start_linux.sh`, `start_windows.bat`, `start_macos.sh`, or `start_wsl.bat` script depending on your OS.
+3) Select your GPU vendor when asked.
+4) Have fun!
 
-Just download the zip above, extract it, and double-click on "start". The web UI and all its dependencies will be installed in the same folder.
+#### How it works
 
-* The source codes and more information can be found here: https://github.com/oobabooga/one-click-installers
-* There is no need to run the installers as admin.
-* Huge thanks to [@jllllll](https://github.com/jllllll), [@ClayShoaf](https://github.com/ClayShoaf), and [@xNul](https://github.com/xNul) for their contributions to these installers.
+The script creates a folder called `installer_files` where it sets up a Conda environment using Miniconda. The installation is self-contained: if you want to reinstall, just delete `installer_files` and run the start script again.
+
+To launch the webui in the future after it is already installed, run the same `start` script. 
+
+#### Getting updates
+
+Run `update_linux.sh`, `update_windows.bat`, `update_macos.sh`, or `update_wsl.bat`.
+
+#### Running commands
+
+If you ever need to install something manually in the `installer_files` environment, you can launch an interactive shell using the cmd script: `cmd_linux.sh`, `cmd_windows.bat`, `cmd_macos.sh`, or `cmd_wsl.bat`.
+
+#### Defining command-line flags
+
+To define persistent command-line flags like `--listen` or `--api`, edit the `CMD_FLAGS.txt` file with a text editor and add them there. Flags can also be provided directly to the start scripts, for instance, `./start-linux.sh --listen`.
+
+#### Other info
+
+* There is no need to run any of those scripts as admin/root.
+* For additional instructions about AMD setup, WSL setup, and nvcc installation, consult [this page](https://github.com/oobabooga/text-generation-webui/blob/main/docs/One-Click-Installers.md).
+* The installer has been tested mostly on NVIDIA GPUs. If you can find a way to improve it for your AMD/Intel Arc/Mac Metal GPU, you are highly encouraged to submit a PR to this repository. The main file to be edited is `one_click.py`.
+* For automated installation, you can use the `GPU_CHOICE` and `LAUNCH_AFTER_INSTALL` environment variables. For instance: `GPU_CHOICE=A LAUNCH_AFTER_INSTALL=False ./start_linux.sh`.
 
 ### Manual installation using Conda
 
@@ -88,7 +108,7 @@ pip install -r requirements.txt
 1) Replace the last command above with
 
 ```
-pip install -r requirements_nocuda.txt
+pip install -r requirements_nowheels.txt
 ```
 
 2) Manually install llama-cpp-python using the appropriate command for your hardware: [Installation from PyPI](https://github.com/abetlen/llama-cpp-python#installation-from-pypi).
@@ -101,9 +121,7 @@ pip install -r requirements_nocuda.txt
 
 ```
 cd text-generation-webui
-mkdir repositories
-cd repositories
-git clone https://github.com/turboderp/exllama
+git clone https://github.com/turboderp/exllama repositories/exllama
 ```
 
 #### bitsandbytes on older NVIDIA GPUs
@@ -165,7 +183,7 @@ text-generation-webui
 ```
 text-generation-webui
 ├── models
-│   ├── llama-13b.ggmlv3.q4_K_M.bin
+│   ├── llama-2-13b-chat.Q4_K_M.gguf
 ```
 
 In both cases, you can use the "Model" tab of the UI to download the model from Hugging Face automatically. It is also possible to download via the command-line with `python download-model.py organization/model` (use `--help` to see all the options).
@@ -227,6 +245,7 @@ Optionally, you can use the following command-line flags:
 | `--settings SETTINGS_FILE`                 | Load the default interface settings from this yaml file. See `settings-template.yaml` for an example. If you create a file called `settings.yaml`, this file will be loaded by default without the need to use the `--settings` flag. |
 | `--extensions EXTENSIONS [EXTENSIONS ...]` | The list of extensions to load. If you want to load more than one extension, write the names separated by spaces. |
 | `--verbose`                                | Print the prompts to the terminal. |
+| `--chat-buttons`                           | Show buttons on chat tab instead of hover menu. |
 
 #### Model loader
 

@@ -63,8 +63,8 @@ document.addEventListener("keydown", function(event) {
     document.getElementById('Regenerate').click();
   }
 
-  // Continue on Ctrl + Shift + C
-  else if (event.ctrlKey && event.shiftKey && event.key === 'C') {
+  // Continue on Alt + Enter
+  else if (event.altKey && event.key === 'Enter') {
     event.preventDefault();
     document.getElementById('Continue').click();
   }
@@ -113,7 +113,7 @@ let isScrolled = false;
 
 targetElement.addEventListener('scroll', function() {
   let diff = targetElement.scrollHeight - targetElement.clientHeight;
-  if(Math.abs(targetElement.scrollTop - diff) <= 1 || diff == 0) {
+  if(Math.abs(targetElement.scrollTop - diff) <= 10 || diff == 0) {
     isScrolled = false;
   } else {
     isScrolled = true;
@@ -161,7 +161,7 @@ let notebookScrolled = false;
 
 notebookElement.addEventListener('scroll', function() {
   let diff = notebookElement.scrollHeight - notebookElement.clientHeight;
-  if(Math.abs(notebookElement.scrollTop - diff) <= 1 || diff == 0) {
+  if(Math.abs(notebookElement.scrollTop - diff) <= 10 || diff == 0) {
     notebookScrolled = false;
   } else {
     notebookScrolled = true;
@@ -186,7 +186,7 @@ let defaultScrolled = false;
 
 defaultElement.addEventListener('scroll', function() {
   let diff = defaultElement.scrollHeight - defaultElement.clientHeight;
-  if(Math.abs(defaultElement.scrollTop - diff) <= 1 || diff == 0) {
+  if(Math.abs(defaultElement.scrollTop - diff) <= 10 || diff == 0) {
     defaultScrolled = false;
   } else {
     defaultScrolled = true;
@@ -214,26 +214,6 @@ for(i = 0; i < textareaElements.length; i++) {
 }
 
 //------------------------------------------------
-// Improve the looks of the chat input field
-//------------------------------------------------
-document.getElementById('chat-input').parentNode.style.background = 'transparent';
-document.getElementById('chat-input').parentNode.style.border = 'none';
-document.getElementById('chat-input').parentElement.parentElement.style.minWidth = 0;
-
-document.getElementById('stop').parentElement.parentElement.style.minWidth = 0;
-document.getElementById('stop').parentElement.parentElement.style.display = 'flex';
-document.getElementById('stop').parentElement.parentElement.style.flexDirection = 'column-reverse';
-document.getElementById('stop').parentElement.parentElement.style.paddingBottom = '3px';
-document.getElementById('stop').parentElement.parentElement.parentElement.style.paddingBottom = '20px';
-
-document.getElementById('gr-hover').parentElement.style.minWidth = 0;
-document.getElementById('gr-hover').parentElement.style.display = 'flex';
-document.getElementById('gr-hover').parentElement.style.flexDirection = 'column-reverse';
-document.getElementById('gr-hover').parentElement.style.flex = '0';
-document.getElementById('gr-hover').parentElement.style.paddingRight = '20px';
-document.getElementById('gr-hover').parentElement.style.paddingBottom = '3px';
-
-//------------------------------------------------
 // Remove some backgrounds
 //------------------------------------------------
 const noBackgroundelements = document.querySelectorAll('.no-background');
@@ -247,7 +227,7 @@ for(i = 0; i < noBackgroundelements.length; i++) {
 // The show/hide events were adapted from:
 // https://github.com/SillyTavern/SillyTavern/blob/6c8bd06308c69d51e2eb174541792a870a83d2d6/public/script.js
 //------------------------------------------------
-const buttonsInChat = document.getElementById("chat-tab").querySelectorAll("button");
+var buttonsInChat = document.querySelectorAll("#chat-tab:not(.old-ui) #chat-buttons button");
 var button = document.getElementById('hover-element-button');
 var menu = document.getElementById('hover-menu');
 
@@ -257,28 +237,34 @@ function showMenu() {
 
 function hideMenu() {
     menu.style.display = 'none'; // Hide the menu
+    document.querySelector('#chat-input textarea').focus();
 }
 
-for (let i = 14; i >= 2; i--) {
-  const thisButton = buttonsInChat[i];
-  menu.appendChild(thisButton);
+if (buttonsInChat.length > 0) {
+    for (let i = buttonsInChat.length - 1; i >= 0; i--) {
+        const thisButton = buttonsInChat[i];
+        menu.appendChild(thisButton);
 
-  if(i != 10) {
-    thisButton.addEventListener("click", () => {
-      hideMenu();
-    });
-  }
+        thisButton.addEventListener("click", () => {
+            hideMenu();
+        });
 
-  const buttonText = thisButton.textContent;
-  const matches = buttonText.match(/(\(.*?\))/);
+        const buttonText = thisButton.textContent;
+        const matches = buttonText.match(/(\(.*?\))/);
 
-  if (matches && matches.length > 1) {
-    // Apply the transparent-substring class to the matched substring
-    const substring = matches[1];
-    const newText = buttonText.replace(substring, `&nbsp;<span class="transparent-substring">${substring}</span>`);
-    thisButton.innerHTML = newText;
-  }
-
+        if (matches && matches.length > 1) {
+            // Apply the transparent-substring class to the matched substring
+            const substring = matches[1];
+            const newText = buttonText.replace(substring, `&nbsp;<span class="transparent-substring">${substring.slice(1, -1)}</span>`);
+            thisButton.innerHTML = newText;
+        }
+    }
+} else {
+    buttonsInChat = document.querySelectorAll("#chat-tab.old-ui #chat-buttons button");
+    for (let i = 0; i < buttonsInChat.length; i++) {
+        buttonsInChat[i].textContent = buttonsInChat[i].textContent.replace(/ \(.*?\)/, '');
+    }
+    document.getElementById('gr-hover-container').style.display = 'none';
 }
 
 function isMouseOverButtonOrMenu() {
@@ -331,6 +317,12 @@ for (var i = 0; i < 2; i++) {
 }
 
 parent.insertBefore(elementToMove, parent.firstChild);
+
+//------------------------------------------------
+// Make the chat input grow upwards instead of downwards
+//------------------------------------------------
+document.getElementById('show-controls').parentNode.style.position = 'absolute';
+document.getElementById('show-controls').parentNode.style.bottom = '0px';
 
 //------------------------------------------------
 // Focus on the chat input

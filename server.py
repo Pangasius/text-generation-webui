@@ -1,6 +1,7 @@
 import warnings
 from modules.LlamaIndex import IndexEngine
 
+import modules.one_click_installer_check
 from modules.block_requests import OpenMonkeyPatch, RequestBlocker
 from modules.logging_colors import logger
 
@@ -217,6 +218,7 @@ if __name__ == "__main__":
         p = Path(shared.model_name)
         if p.exists():
             model_name = p.parts[-1]
+            shared.model_name = model_name
         else:
             model_name = shared.model_name
 

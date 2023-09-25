@@ -1,11 +1,11 @@
 import argparse
+import sys
 from collections import OrderedDict
 from pathlib import Path
 
 import yaml
 
 from modules.logging_colors import logger
-
 
 # Model variables
 model = None
@@ -25,7 +25,6 @@ processing_message = '*Is typing...*'
 gradio = {}
 persistent_interface_state = {}
 need_restart = False
-session_is_loading = False
 
 # UI defaults
 settings = {
@@ -35,7 +34,6 @@ settings = {
     'mode': 'chat',
     'use_llama_index': False,
     'chat_style': 'cai-chat',
-    'character': 'None',
     'prompt-default': 'QA',
     'prompt-notebook': 'QA',
     'preset': 'simple-1',
@@ -51,13 +49,12 @@ settings = {
     'auto_max_new_tokens': False,
     'max_tokens_second': 0,
     'ban_eos_token': False,
+    'custom_token_bans': '',
     'add_bos_token': True,
     'skip_special_tokens': True,
     'stream': True,
     'name1': 'You',
-    'name2': 'Assistant',
-    'context': 'This is a conversation with your Assistant. It is a computer program designed to help you with various tasks such as answering questions, providing recommendations, and helping with decision making. You can ask it anything you want and it will do its best to give you accurate and relevant information.',
-    'greeting': '',
+    'character': 'Assistant',
     'instruction_template': 'Alpaca',
     'chat-instruct_command': 'Continue the chat dialogue below. Write a single reply for the character "<|character|>".\n\n<|prompt|>',
     'autoload_model': False,
@@ -92,6 +89,7 @@ parser.add_argument('--no-stream', action='store_true', help='DEPRECATED')
 parser.add_argument('--settings', type=str, help='Load the default interface settings from this yaml file. See settings-template.yaml for an example. If you create a file called settings.yaml, this file will be loaded by default without the need to use the --settings flag.')
 parser.add_argument('--extensions', type=str, nargs="+", help='The list of extensions to load. If you want to load more than one extension, write the names separated by spaces.')
 parser.add_argument('--verbose', action='store_true', help='Print the prompts to the terminal.')
+parser.add_argument('--chat-buttons', action='store_true', help='Show buttons on chat tab instead of hover menu.')
 
 # Model loader
 parser.add_argument('--loader', type=str, help='Choose the model loader manually, otherwise, it will get autodetected. Valid options: transformers, autogptq, gptq-for-llama, exllama, exllama_hf, llamacpp, rwkv')
@@ -194,6 +192,11 @@ parser.add_argument('--lora-train', action='store_true', help='Train a LoRA.')
 
 args = parser.parse_args()
 args_defaults = parser.parse_args([])
+provided_arguments = []
+for arg in sys.argv[1:]:
+    arg = arg.lstrip('-').replace('-', '_')
+    if hasattr(args, arg):
+        provided_arguments.append(arg)
 
 # Deprecation warnings
 for k in ['chat', 'notebook', 'no_stream']:
@@ -268,10 +271,8 @@ with Path(f'{args.model_dir}/config.yaml') as p:
 with Path(f'{args.model_dir}/config-user.yaml') as p:
     if p.exists():
         user_config = yaml.safe_load(open(p, 'r').read())
-        for k in user_config:
-            if k in model_config:
-                model_config[k].update(user_config[k])
-            else:
-                model_config[k] = user_config[k]
+    else:
+        user_config = {}
 
 model_config = OrderedDict(model_config)
+user_config = OrderedDict(user_config)
