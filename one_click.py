@@ -2,6 +2,7 @@ import argparse
 import glob
 import os
 import platform
+import re
 import site
 import subprocess
 import sys
@@ -22,6 +23,7 @@ if os.path.exists(cmd_flags_path):
 else:
     CMD_FLAGS = ''
 
+flags = f"{' '.join([flag for flag in sys.argv[1:] if flag != '--update'])} {CMD_FLAGS}"
 
 def is_linux():
     return sys.platform.startswith("linux")
@@ -183,16 +185,22 @@ def update_requirements(initial_installation=False):
 
     run_cmd("git pull --autostash", assert_success=True, environment=True)
 
-    # Initial installation only: install the extensions requirements
-    if initial_installation:
-        extensions = next(os.walk("extensions"))[1]
-        for extension in extensions:
-            if extension in ['superbooga']:  # No wheels available for requirements
-                continue
+    # Extensions requirements are installed only during the initial install by default.
+    # That can be changed with the INSTALL_EXTENSIONS environment variable.
+    install_extensions = os.environ.get("INSTALL_EXTENSIONS", "false").lower() in ("yes", "y", "true", "1", "t", "on")
+    if initial_installation or install_extensions:
+        if not install_extensions:
+            print_big_message("Will not install extensions due to INSTALL_EXTENSIONS environment variable.")
+        else:
+            print("Installing extensions requirements.")
+            extensions = next(os.walk("extensions"))[1]
+            for extension in extensions:
+                if extension in ['superbooga', 'superboogav2']:  # No wheels available for requirements
+                    continue
 
-            extension_req_path = os.path.join("extensions", extension, "requirements.txt")
-            if os.path.exists(extension_req_path):
-                run_cmd("python -m pip install -r " + extension_req_path + " --upgrade", assert_success=True, environment=True)
+                extension_req_path = os.path.join("extensions", extension, "requirements.txt")
+                if os.path.exists(extension_req_path):
+                    run_cmd("python -m pip install -r " + extension_req_path + " --upgrade", assert_success=True, environment=True)
 
     # Detect the PyTorch version
     torver = torch_version()
@@ -279,8 +287,7 @@ def download_model():
 
 
 def launch_webui():
-    flags = [flag for flag in sys.argv[1:] if flag != '--update']
-    run_cmd(f"python server.py {' '.join(flags)} {CMD_FLAGS}", environment=True)
+    run_cmd(f"python server.py {flags}", environment=True)
 
 
 if __name__ == "__main__":
@@ -304,7 +311,14 @@ if __name__ == "__main__":
             sys.exit()
 
         # Check if a model has been downloaded yet
-        if len([item for item in glob.glob('models/*') if not item.endswith(('.txt', '.yaml'))]) == 0:
+        if '--model-dir' in flags:
+            # Splits on ' ' or '=' while maintaining spaces within quotes
+            flags_list = re.split(' +(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)|=',flags)
+            model_dir = [flags_list[(flags_list.index(flag)+1)] for flag in flags_list if flag == '--model-dir'][0].strip('"\'')
+        else:
+            model_dir = 'models'
+
+        if len([item for item in glob.glob(f'{model_dir}/*') if not item.endswith(('.txt', '.yaml'))]) == 0:
             print_big_message("WARNING: You haven't downloaded any model yet.\nOnce the web UI launches, head over to the \"Model\" tab and download one.")
 
         # Workaround for llama-cpp-python loading paths in CUDA env vars even if they do not exist

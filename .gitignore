@@ -34,6 +34,9 @@ models/config-user.yaml
 .DS_Store
 Thumbs.db
 
+.chroma
+installer_files
+
 examples/
 index/
 wandb/

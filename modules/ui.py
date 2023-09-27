@@ -48,6 +48,7 @@ else:
 def list_model_elements():
     elements = [
         'loader',
+        'filter_by_loader',
         'cpu_memory',
         'auto_devices',
         'disk',
@@ -55,6 +56,7 @@ def list_model_elements():
         'bf16',
         'load_in_8bit',
         'trust_remote_code',
+        'use_fast',
         'load_in_4bit',
         'compute_dtype',
         'quant_type',
@@ -84,7 +86,8 @@ def list_model_elements():
         'max_seq_len',
         'compress_pos_emb',
         'alpha_value',
-        'rope_freq_base'
+        'rope_freq_base',
+        'numa',
     ]
 
     for i in range(torch.cuda.device_count()):
@@ -223,8 +226,7 @@ class ToolButton(gr.Button, gr.components.IOComponent):
         return "button"
 
 
-def create_refresh_button(refresh_component, refresh_method,
-                          refreshed_args, elem_class):
+def create_refresh_button(refresh_component, refresh_method, refreshed_args, elem_class, interactive=True):
     """
     Refresh button for gradio forms.
     Copied from https://github.com/AUTOMATIC1111/stable-diffusion-webui.
@@ -238,7 +240,7 @@ def create_refresh_button(refresh_component, refresh_method,
 
         return gr.update(**(args or {}))
 
-    refresh_button = ToolButton(value=refresh_symbol, elem_classes=elem_class)
+    refresh_button = ToolButton(value=refresh_symbol, elem_classes=elem_class, interactive=interactive)
     refresh_button.click(
         fn=refresh,
         inputs=[],
