@@ -1,5 +1,5 @@
 import warnings
-from modules.LlamaIndex import IndexEngine
+from extensions.llamaindex.LlamaIndex import IndexEngine
 
 import modules.one_click_installer_check
 from modules.block_requests import OpenMonkeyPatch, RequestBlocker
@@ -233,10 +233,6 @@ if __name__ == "__main__":
 
     if shared.args.lora_train:
         training.do_auto_train()
-        exit(0)
-
-    if shared.args.fine_tune_llama_index:
-        IndexEngine().as_query_engine()
         exit(0)
 
     shared.generation_lock = Lock()

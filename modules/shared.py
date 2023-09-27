@@ -164,7 +164,6 @@ parser.add_argument('--compress_pos_emb', type=int, default=1, help="Positional 
 
 # LLamaIndex
 parser.add_argument('--use-llama-index', action='store_true', help='Use llama index for faster inference.')
-parser.add_argument('--fine-tune-llama-index', action='store_true', help='Fine-tune the llama index on the fly.')
 
 # Gradio
 parser.add_argument('--listen', action='store_true', help='Make the web UI reachable from your local network.')

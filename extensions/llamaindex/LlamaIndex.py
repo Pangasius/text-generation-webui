@@ -11,6 +11,8 @@ from typing import List
 from zipfile import ZipFile
 import pytesseract
 
+from pdf2docx import Converter
+
 from llama_index import (
     Document,
     StorageContext,
@@ -22,14 +24,13 @@ from llama_index import (
     ServiceContext,
     PromptHelper,
     QueryBundle,
-    get_response_synthesizer
 )
 
 from llama_index.llms import HuggingFaceLLM
 from llama_index.graph_stores import NebulaGraphStore
 
 from llama_index.schema import NodeWithScore
-from llama_index.query_engine import RetrieverQueryEngine
+
 from llama_index.retrievers import (
     BaseRetriever,
     VectorIndexRetriever,
@@ -91,6 +92,7 @@ adapter_model = TwoLayerNN(
     add_residual=True,
 )
 
+
 class CustomRetriever(BaseRetriever):
     """
     Custom retriever that performs
@@ -137,23 +139,23 @@ class IndexEngine():
         print("Loading model...")
 
         self.llm = HuggingFaceLLM(model=shared.model,
-                             tokenizer=shared.tokenizer,
-                             max_new_tokens=shared.settings['max_new_tokens'],
-                             context_window=shared.args.n_ctx)
+                                  tokenizer=shared.tokenizer,
+                                  max_new_tokens=shared.settings['max_new_tokens'],
+                                  context_window=shared.args.n_ctx)
 
-        self.engine = None
+        self.retriever = None
 
         print("Model loaded")
 
-    def get_service_context(self, embed_model="local:BAAI/bge-large-en-v1.5") :
+    def get_service_context(self, embed_model="local:BAAI/bge-large-en-v1.5"):
         prompt_helper = PromptHelper(tokenizer=shared.tokenizer)
 
         service_context = ServiceContext.\
             from_defaults(llm=self.llm,
                           embed_model=embed_model,
                           prompt_helper=prompt_helper,
-                          chunk_size=128,
-                          context_window=min(128, shared.args.n_ctx))
+                          chunk_size=1024,
+                          context_window=min(512, shared.args.n_ctx))
 
         return service_context
 
@@ -197,6 +199,11 @@ class IndexEngine():
 
         print("Unstructured reading files...")
         for paths in glob.glob("./examples/**/*.*", recursive=True):
+            if not re.match(r".*/F12-FR/.*$", paths):
+                # temporary to restrict to F12-FR
+                print("- ", paths)
+                continue
+
             if re.match(r".*/private/.*$", paths) or not re.match(r".*\.[a-z]{1,10}$", paths) or re.match(r".*(((I|i)con(s)?)|(\.graffle)|(MACOSX)|(\/out)|(\/bin))\/.*", paths):
                 print("- ", paths)
                 continue
@@ -275,7 +282,7 @@ class IndexEngine():
         kg_index = KnowledgeGraphIndex.from_documents(
             documents,
             storage_context=storage_context,
-            max_triplets_per_chunk=15,
+            max_triplets_per_chunk=30,
             space_name=space_name,
             edge_types=edge_types,
             rel_prop_names=rel_prop_names,
@@ -299,7 +306,7 @@ class IndexEngine():
         return service_context
 
     def fine_tune(self, docs: List[Document],
-                  out_path="models/embedder/mig6-v1"):
+                  out_path="models/embedder/F12-FR"):
         # generate a finetuning qa dataset
         print("Generating finetuning dataset...")
 
@@ -317,7 +324,7 @@ class IndexEngine():
 
             dataset = generate_qa_embedding_pairs(nodes,
                                                   llm=self.llm,
-                                                  num_questions_per_chunk=1)
+                                                  num_questions_per_chunk=5)
 
             dataset.save_json(dataset_path)
         else:
@@ -332,7 +339,7 @@ class IndexEngine():
             model_output_path=out_path,
             # bias=True,
             dim=1024,
-            epochs=1,
+            epochs=4,
             batch_size=12,
             verbose=True,
             # optimizer_class=torch.optim.SGD,
@@ -344,7 +351,16 @@ class IndexEngine():
         return LinearAdapterEmbeddingModel(base_embed_model,
                                            out_path)
 
-    def as_query_engine(self, streaming=True, embed_model="local:BAAI/bge-large-en-v1.5"):
+    def custom_retriever(self, embed_model="local:BAAI/bge-large-en-v1.5"):
+        if embed_model.startswith("custom:"):
+            embed_model = LinearAdapterEmbeddingModel(
+                resolve_embed_model("local:BAAI/bge-large-en-v1.5"),
+                embed_model[7:]
+            )
+
+        return embed_model
+
+    def as_retriever(self, embed_model="local:BAAI/bge-large-en-v1.5"):
 
         # count the files in index and if there are none, index the files
         if (len(list(Path("index/vector").glob("*"))) == 0
@@ -354,6 +370,7 @@ class IndexEngine():
             service_context = self.index_documents(documents=documents,
                                                    embed_model=embed_model)
         else:
+            embed_model = self.custom_retriever(embed_model=embed_model)
             service_context = self.get_service_context(embed_model=embed_model)
 
         print("Loading engine...")
@@ -371,7 +388,7 @@ class IndexEngine():
         kg_retriever = KnowledgeGraphRAGRetriever(
             index=kg_index,
             retriever_mode="keyword",
-            include_text=False,
+            include_text=True,
             service_context=service_context,
             storage_context=storage_context,
             verbose=True,
@@ -380,23 +397,8 @@ class IndexEngine():
         custom_retriever = CustomRetriever(vector_retriever, kg_retriever)
 
         # create response synthesizer
-        response_synthesizer = get_response_synthesizer(
-            service_context=service_context,
-            response_mode="tree_summarize",
-            streaming=streaming
-        )
-
-        self.engine = RetrieverQueryEngine(
-            retriever=custom_retriever,
-            response_synthesizer=response_synthesizer,
-        )
+        self.retriever = custom_retriever
 
         print("Engine loaded")
 
-        return self
-
-    def querier(self, streaming=True):
-        if self.engine is None:
-            self.as_query_engine(streaming=streaming)
-
-        return self
+        return self.retriever
