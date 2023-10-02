@@ -53,10 +53,10 @@ def generate_ds_config(ds_bf16, train_batch_size, nvme_offload_dir):
             },
             "zero_optimization": {
                 "stage": 3,
-                "offload_param": {
-                    "device": "cpu",
-                    "pin_memory": True
-                },
+                "offload_param": None,  # {
+                    # "device": "cpu",
+                    # "pin_memory": True
+                # },
                 "overlap_comm": True,
                 "contiguous_gradients": True,
                 "reduce_bucket_size": "auto",

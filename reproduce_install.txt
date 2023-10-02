@@ -1,11 +1,11 @@
-# for unstructured
-sudo apt-get install libreoffice
+# for unstructured, deepspeed
+sudo apt-get install libreoffice libaio-dev
 
 # conda torch
-conda install pytorch torchvision torchaudio pytorch-cuda=11.7 -c pytorch -c nvidia
+conda install pytorch torchvision torchaudio pytorch-cuda=11.7 cuda-nvcc -c pytorch -c nvidia
 
 # conda other
-conda install -c conda-forge regex pytesseract gradio markdown transformers accelerate datasets scipy sentencepiece protobuf sentence-transformers colorama einops optimum tensorboard wandb
+conda install -c conda-forge regex pytesseract markdown transformers accelerate datasets scipy sentencepiece protobuf sentence-transformers colorama einops optimum tensorboard wandb scikit-learn-intelex mpi4py mpich xformers
 
 # not on conda
-pip install llama-index llama-hub pdf2docx peft bitsandbytes "unstructured[all-docs]" nebula3-python exllamav2
+pip install llama-index llama-hub pdf2docx peft bitsandbytes "unstructured[all-docs]" nebula3-python exllamav2 deepspeed gradio auto-gptq
