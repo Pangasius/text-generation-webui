@@ -3,13 +3,15 @@
 from pathlib import Path
 import glob
 import regex as re
-import time
+
 import os
 from typing import List
 
 # from pdf2docx import Converter
 from zipfile import ZipFile
 import pytesseract
+
+import json
 
 from pdf2docx import Converter
 
@@ -30,6 +32,8 @@ from llama_index.llms import HuggingFaceLLM
 from llama_index.graph_stores import NebulaGraphStore
 
 from llama_index.schema import NodeWithScore
+
+from llama_index.readers.base import BaseReader
 
 from llama_index.retrievers import (
     BaseRetriever,
@@ -134,6 +138,21 @@ class CustomRetriever(BaseRetriever):
         return retrieve_nodes
 
 
+class customReader(BaseReader):
+    def load_data(self, file: Path) -> List[Document]:
+        # The documents to be read are python dictionaries in string format
+        # The keys are "content", "attachement", "url", the url will be the metadata
+
+        with open(file, "r", encoding="latin_1") as f:
+            text_dict = f.read()
+
+        real_dict = json.loads(text_dict)
+
+        doc = Document(text=real_dict["content"], metadata=real_dict["url"])
+
+        return [doc]
+
+
 class IndexEngine():
     def __init__(self):
         print("Loading model...")
@@ -159,22 +178,8 @@ class IndexEngine():
 
         return service_context
 
-    def parse_documents(self):
-        print("Indexing documents...")
-
-        t0 = time.time()
-
-        print("Wikipedia...")
-
-        unstructuredReader = download_loader("UnstructuredReader")
-        unstructuredLoader = unstructuredReader()
-
-        toBeProcessed = []
-
-        documents = []
-
-        print("Files...")
-
+    @staticmethod
+    def unzip_files():
         print("Unzipping and converting files...")
         # first unzip all zip files and turn all pdf files into docx files
         for paths in glob.glob("./examples/**/*", recursive=True):
@@ -197,22 +202,27 @@ class IndexEngine():
                 print("Error extracting zip file", paths, ":", e)
                 continue
 
+    @staticmethod
+    def read_documents(documents: List[Document]):
         print("Unstructured reading files...")
-        for paths in glob.glob("./examples/**/*.*", recursive=True):
-            if not re.match(r".*/F12-FR/.*$", paths):
-                # temporary to restrict to F12-FR
-                print("- ", paths)
-                continue
 
+        unstructuredReader = download_loader("UnstructuredReader")
+        unstructuredLoader = unstructuredReader()
+
+        toBeProcessed = []
+
+        for paths in glob.glob("./examples/**/*.*", recursive=True):
+            # Skip generic images such as icons, logos, etc.
             if re.match(r".*/private/.*$", paths) or not re.match(r".*\.[a-z]{1,10}$", paths) or re.match(r".*(((I|i)con(s)?)|(\.graffle)|(MACOSX)|(\/out)|(\/bin))\/.*", paths):
-                print("- ", paths)
                 continue
 
             # Skip the produced document and all unsupported files
-            if re.match(r".*\.((sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(pdf)|(xlsx))", paths):
-                if re.match(r".*\.((sql)|(xsd))", paths):
+            if re.match(r".*\.((txt)|(sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(pdf)|(xlsx))", paths):
+                if re.match(r".*\.((sql)|(xsd)|(txt))", paths):
+                    print("+ ", paths)
                     toBeProcessed.append(paths)
-                print("- ", paths)
+                else:
+                    print("- ", paths)
                 continue
 
             try:
@@ -223,11 +233,15 @@ class IndexEngine():
                 print("Error loading file ", paths, ":", e)
                 continue
 
-        reader = SimpleDirectoryReader(input_files=toBeProcessed)
+        reader = SimpleDirectoryReader(input_files=toBeProcessed,
+                                       encoding="latin_1",
+                                       file_extractor={"txt": customReader()})
         documents += reader.load_data()
 
+    @staticmethod
+    def filter_out(documents: List[Document]):
         print("Filtering documents...")
-        initial_size = sum(list(map(lambda x: len(x.text), documents)))
+
         for document in documents:
             if (document.text.__contains__("Problem authenticating")
                     or document.text.__contains__("File Generator")
@@ -236,12 +250,6 @@ class IndexEngine():
                 documents.remove(document)
                 continue
 
-            # remove all emails, ip
-            document.text = re.sub(r"([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)|(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", "", document.text)
-
-            # remove all phone numbers
-            document.text = re.sub(r"(\d{3}[-\.\s]??\d{3}[-\.\s]??\d{4}|\(\d{3}\)\s*\d{3}[-\.\s]??\d{4}|\d{3}[-\.\s]??\d{4})", "", document.text)
-
             # remove all lines line breaks bigger than two \n
             document.text = re.sub(r"\n{2,}", "\n", document.text)
 
@@ -249,9 +257,17 @@ class IndexEngine():
                 documents.remove(document)
                 continue
 
-        t1 = time.time()
+    def parse_documents(self):
+        print("Indexing documents...")
 
-        print("Documents loaded in", t1-t0, "seconds")
+        self.unzip_files()
+
+        documents = []
+        self.read_documents(documents)
+
+        initial_size = sum(list(map(lambda x: len(x.text), documents)))
+
+        self.filter_out(documents)
 
         print("Initial size:", initial_size)
         print("Final size:", sum(list(map(lambda x: len(x.text), documents))))
@@ -262,47 +278,51 @@ class IndexEngine():
                 f.write(document.text)
                 f.write("\n\n\n")
 
-        print("Indexing...")
-
         return documents
 
     def index_documents(self, documents: List[Document],
-                        embed_model="local:BAAI/bge-large-en-v1.5"):
+                        embed_model="local:BAAI/bge-large-en-v1.5", kg=True):
 
+        print("Indexing documents...")
         service_context = self.get_service_context(embed_model=embed_model)
 
-        graph_store = NebulaGraphStore(
-            space_name=space_name,
-            edge_types=edge_types,
-            rel_prop_names=rel_prop_names,
-            tags=tags,
-        )
-        storage_context = StorageContext.from_defaults(graph_store=graph_store)
-
-        kg_index = KnowledgeGraphIndex.from_documents(
-            documents,
-            storage_context=storage_context,
-            max_triplets_per_chunk=30,
-            space_name=space_name,
-            edge_types=edge_types,
-            rel_prop_names=rel_prop_names,
-            tags=tags,
-            include_embeddings=True,
-            service_context=service_context,
-            show_progress=True,
-        )
-
+        # Indexing into a vector store
         vector_index = VectorStoreIndex.from_documents(
             documents=documents,
-            service_context=service_context)
+            service_context=service_context,
+            show_progress=True)
 
         # writing to disk
-
         vector_index.storage_context.persist(persist_dir="index/vector")
-        kg_index.storage_context.persist(persist_dir="index/kg")
+
+        if kg:
+            # Graph store params
+            graph_store = NebulaGraphStore(
+                space_name=space_name,
+                edge_types=edge_types,
+                rel_prop_names=rel_prop_names,
+                tags=tags,
+            )
+            storage_context = StorageContext.from_defaults(graph_store=graph_store)
+
+            # Indexing into a knowledge graph
+            kg_index = KnowledgeGraphIndex.from_documents(
+                documents,
+                storage_context=storage_context,
+                max_triplets_per_chunk=30,
+                space_name=space_name,
+                edge_types=edge_types,
+                rel_prop_names=rel_prop_names,
+                tags=tags,
+                include_embeddings=True,
+                service_context=service_context,
+                show_progress=True,
+            )
+
+            # writing to disk
+            kg_index.storage_context.persist(persist_dir="index/kg")
 
         print("Indexing complete")
-
         return service_context
 
     def fine_tune(self, docs: List[Document],
@@ -360,15 +380,15 @@ class IndexEngine():
 
         return embed_model
 
-    def as_retriever(self, embed_model="local:BAAI/bge-large-en-v1.5"):
+    def as_retriever(self, embed_model="local:BAAI/bge-large-en-v1.5", kg=True, fine_tune=True):
 
         # count the files in index and if there are none, index the files
-        if (len(list(Path("index/vector").glob("*"))) == 0
-                or len(list(Path("index/kg").glob("*"))) == 0):
+        if (len(list(Path("index/vector").glob("*"))) == 0):
             documents = self.parse_documents()
-            embed_model = self.fine_tune(docs=documents)
+            if fine_tune:
+                embed_model = self.fine_tune(docs=documents)
             service_context = self.index_documents(documents=documents,
-                                                   embed_model=embed_model)
+                                                   embed_model=embed_model, kg=kg)
         else:
             embed_model = self.custom_retriever(embed_model=embed_model)
             service_context = self.get_service_context(embed_model=embed_model)
@@ -379,26 +399,26 @@ class IndexEngine():
         vector_index = load_index_from_storage(storage_context,
                                                service_context=service_context)
 
-        storage_context = StorageContext.from_defaults(persist_dir="index/kg")
-        kg_index = load_index_from_storage(storage_context,
-                                           service_context=service_context)
-
-        # create custom retriever
         vector_retriever = VectorIndexRetriever(index=vector_index)
-        kg_retriever = KnowledgeGraphRAGRetriever(
-            index=kg_index,
-            retriever_mode="keyword",
-            include_text=True,
-            service_context=service_context,
-            storage_context=storage_context,
-            verbose=True,
-            graph_traversal_depth=3
-        )
-        custom_retriever = CustomRetriever(vector_retriever, kg_retriever)
 
-        # create response synthesizer
-        self.retriever = custom_retriever
+        self.retriever = vector_retriever
+
+        if kg :
+            storage_context = StorageContext.from_defaults(persist_dir="index/kg")
+            kg_index = load_index_from_storage(storage_context,
+                                            service_context=service_context)
+
+            kg_retriever = KnowledgeGraphRAGRetriever(
+                index=kg_index,
+                retriever_mode="keyword",
+                include_text=True,
+                service_context=service_context,
+                storage_context=storage_context,
+                verbose=True,
+                graph_traversal_depth=3
+            )
+
+            self.retriever = CustomRetriever(vector_retriever, kg_retriever)
 
         print("Engine loaded")
-
         return self.retriever

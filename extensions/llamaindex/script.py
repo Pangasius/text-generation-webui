@@ -12,7 +12,7 @@ def input_modifier(question: str, state: dict, is_chat: bool = False) -> str:
             return question
 
         if shared.index is None:
-            shared.index = IndexEngine().as_retriever(embed_model="custom:models/embedder/F12-FR")  # mig6-v1")
+            shared.index = IndexEngine().as_retriever(kg=False, fine_tune=False)
 
         with torch.no_grad():
             print("Llama Index is enabled")
