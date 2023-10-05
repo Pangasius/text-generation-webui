@@ -5,13 +5,13 @@ import glob
 import regex as re
 
 import os
-from typing import List
+from typing import Dict, List, Optional
+
+import json
 
 # from pdf2docx import Converter
 from zipfile import ZipFile
 import pytesseract
-
-import json
 
 from pdf2docx import Converter
 
@@ -138,17 +138,24 @@ class CustomRetriever(BaseRetriever):
         return retrieve_nodes
 
 
-class customReader(BaseReader):
-    def load_data(self, file: Path) -> List[Document]:
+class CustomReader(BaseReader):
+    def load_data(self, file: Path, extra_info: Optional[Dict]) -> List[Document]:
         # The documents to be read are python dictionaries in string format
-        # The keys are "content", "attachement", "url", the url will be the metadata
+        # The keys are "content", "attachment", "url", the url will be the metadata
 
-        with open(file, "r", encoding="latin_1") as f:
+        with open(file, "r", encoding="utf_8") as f:
             text_dict = f.read()
 
-        real_dict = json.loads(text_dict)
+        j = json.loads(text_dict)
 
-        doc = Document(text=real_dict["content"], metadata=real_dict["url"])
+        print(j)
+        print(j["content"])
+
+        content = j["content"]
+        url = j["url"]
+        attachments = j["attachments"]
+
+        doc = Document(text=content, metadata={"url": url, "attachments": attachments})
 
         return [doc]
 
@@ -217,8 +224,8 @@ class IndexEngine():
                 continue
 
             # Skip the produced document and all unsupported files
-            if re.match(r".*\.((txt)|(sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(pdf)|(xlsx))", paths):
-                if re.match(r".*\.((sql)|(xsd)|(txt))", paths):
+            if re.match(r".*\.((sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(pdf)|(xlsx))", paths):
+                if re.match(r".*\.((sql)|(xsd)|(json))", paths):
                     print("+ ", paths)
                     toBeProcessed.append(paths)
                 else:
@@ -234,8 +241,8 @@ class IndexEngine():
                 continue
 
         reader = SimpleDirectoryReader(input_files=toBeProcessed,
-                                       encoding="latin_1",
-                                       file_extractor={"txt": customReader()})
+                                       encoding="utf_8",
+                                       file_extractor={".json": CustomReader()})
         documents += reader.load_data()
 
     @staticmethod

@@ -2,8 +2,8 @@ import traceback
 import torch
 from extensions.llamaindex.LlamaIndex import IndexEngine
 from llama_index.prompts.default_prompts import DEFAULT_TREE_SUMMARIZE_PROMPT
+from llama_index.schema import MetadataMode
 import modules.shared as shared
-
 
 def input_modifier(question: str, state: dict, is_chat: bool = False) -> str:
     try:
@@ -18,7 +18,12 @@ def input_modifier(question: str, state: dict, is_chat: bool = False) -> str:
             print("Llama Index is enabled")
             resp = shared.index.retrieve(question)
 
-            question = DEFAULT_TREE_SUMMARIZE_PROMPT.format(context_str=resp,
+            context = "\n\n".join([x.get_content(metadata_mode=MetadataMode.ALL)
+                       for x in resp])
+
+            state["last_context"] = context
+
+            question = DEFAULT_TREE_SUMMARIZE_PROMPT.format(context_str=context,
                                                             query_str=question)
 
         print(question)
@@ -27,3 +32,11 @@ def input_modifier(question: str, state: dict, is_chat: bool = False) -> str:
         traceback.print_exc()
     finally:
         return question
+
+
+def output_modifier(string, state, is_chat=False):
+    if state["last_context"] is not None:
+        output = "Using Llama Index\n\n" + state["last_context"] + "\n\n" + string
+        return output
+    else:
+        return string
