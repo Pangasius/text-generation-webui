@@ -50,10 +50,6 @@ from llama_index.embeddings import (
     LinearAdapterEmbeddingModel
 )
 
-from llama_index.embeddings.adapter_utils import (
-    TwoLayerNN
-)
-
 from llama_index.finetuning.embeddings.common import (
     generate_qa_embedding_pairs,
     EmbeddingQAFinetuneDataset
@@ -88,13 +84,21 @@ edge_types, rel_prop_names = ["relationship"], [
 ]  # default, could be omit if create from an empty kg
 tags = ["entity"]  # default, could be omit if create from an empty kg
 
-adapter_model = TwoLayerNN(
-    1024,  # input dimension
-    1024,  # hidden dimension
-    1024,  # output dimension
-    bias=True,
-    add_residual=True,
-)
+
+def connect_PostgreSQL(index_name: str):
+    from llama_index.vector_stores import PGVectorStore
+
+    vector_store = PGVectorStore.from_params(
+        database="llamaindex",
+        host="localhost",
+        password="pgres",
+        port="5432",
+        user="pgres",
+        table_name=index_name,
+        embed_dim=1024,  # embedding dimension
+    )
+
+    return vector_store
 
 
 class CustomRetriever(BaseRetriever):
@@ -146,29 +150,27 @@ class CustomReader(BaseReader):
         with open(file, "r", encoding="utf_8") as f:
             text_dict = f.read()
 
-        j = json.loads(text_dict)
+        try:
+            j = json.loads(text_dict)
 
-        print(j)
-        print(j["content"])
+            content = j["content"]
+            metadata = j["metadata"]
 
-        content = j["content"]
-        url = j["url"]
-        attachments = j["attachments"]
+            # Remove attachments for now
+            if "attachments" in metadata:
+                metadata.pop("attachments")
 
-        doc = Document(text=content, metadata={"url": url, "attachments": attachments})
+            doc = Document(text=content, metadata=metadata)
 
-        return [doc]
+            return [doc]
+        except Exception as e:
+            print("JSON not accepted", e)
+            return []
 
 
 class IndexEngine():
     def __init__(self):
         print("Loading model...")
-
-        self.llm = HuggingFaceLLM(model=shared.model,
-                                  tokenizer=shared.tokenizer,
-                                  max_new_tokens=shared.settings['max_new_tokens'],
-                                  context_window=shared.args.n_ctx)
-
         self.retriever = None
 
         print("Model loaded")
@@ -176,8 +178,17 @@ class IndexEngine():
     def get_service_context(self, embed_model="local:BAAI/bge-large-en-v1.5"):
         prompt_helper = PromptHelper(tokenizer=shared.tokenizer)
 
+        llm = HuggingFaceLLM(model=shared.model,
+                             tokenizer=shared.tokenizer,
+                             max_new_tokens=shared.settings['max_new_tokens'],
+                             context_window=shared.args.n_ctx)
+
+        embed_model = resolve_embed_model("local:BAAI/bge-large-en-v1.5")
+
+        embed_model.embed_batch_size = 1
+
         service_context = ServiceContext.\
-            from_defaults(llm=self.llm,
+            from_defaults(llm=llm,
                           embed_model=embed_model,
                           prompt_helper=prompt_helper,
                           chunk_size=1024,
@@ -210,7 +221,7 @@ class IndexEngine():
                 continue
 
     @staticmethod
-    def read_documents(documents: List[Document]):
+    def read_documents(documents: List[Document], index_name: str):
         print("Unstructured reading files...")
 
         unstructuredReader = download_loader("UnstructuredReader")
@@ -218,14 +229,10 @@ class IndexEngine():
 
         toBeProcessed = []
 
-        for paths in glob.glob("./examples/**/*.*", recursive=True):
-            # Skip generic images such as icons, logos, etc.
-            if re.match(r".*/private/.*$", paths) or not re.match(r".*\.[a-z]{1,10}$", paths) or re.match(r".*(((I|i)con(s)?)|(\.graffle)|(MACOSX)|(\/out)|(\/bin))\/.*", paths):
-                continue
-
+        for paths in glob.glob("./examples/" + index_name + "/**/*.*", recursive=True):
             # Skip the produced document and all unsupported files
-            if re.match(r".*\.((sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(pdf)|(xlsx))", paths):
-                if re.match(r".*\.((sql)|(xsd)|(json))", paths):
+            if re.match(r".*\.((sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(xlsx))", paths):
+                if re.match(r".*\.((json))", paths):
                     print("+ ", paths)
                     toBeProcessed.append(paths)
                 else:
@@ -234,6 +241,8 @@ class IndexEngine():
 
             try:
                 documents += unstructuredLoader.load_data(file=Path(paths))
+                documents[-1].metadata["url"] = paths
+                documents[-1].metadata["title"] = paths.split("/")[-1]
                 print("+ ", paths)
             except Exception as e:
                 print("- ", paths)
@@ -264,13 +273,13 @@ class IndexEngine():
                 documents.remove(document)
                 continue
 
-    def parse_documents(self):
+    def parse_documents(self, index_name: str):
         print("Indexing documents...")
 
-        self.unzip_files()
+        # self.unzip_files()
 
         documents = []
-        self.read_documents(documents)
+        self.read_documents(documents, index_name=index_name)
 
         initial_size = sum(list(map(lambda x: len(x.text), documents)))
 
@@ -287,20 +296,29 @@ class IndexEngine():
 
         return documents
 
-    def index_documents(self, documents: List[Document],
-                        embed_model="local:BAAI/bge-large-en-v1.5", kg=True):
+    def get_retrievers(self, documents: List[Document] | None,
+                       index_name : str,
+                       embed_model="local:BAAI/bge-large-en-v1.5", kg=True):
 
         print("Indexing documents...")
         service_context = self.get_service_context(embed_model=embed_model)
 
         # Indexing into a vector store
-        vector_index = VectorStoreIndex.from_documents(
-            documents=documents,
-            service_context=service_context,
-            show_progress=True)
+        if documents is not None:
+            vector_index = VectorStoreIndex.from_documents(
+                documents=documents,
+                service_context=service_context,
+                storage_context=StorageContext.from_defaults(vector_store=connect_PostgreSQL(index_name)),
+                show_progress=True
+            )
+        else:
+            vector_index = VectorStoreIndex.from_vector_store(vector_store=connect_PostgreSQL(index_name))
 
-        # writing to disk
-        vector_index.storage_context.persist(persist_dir="index/vector")
+        vec_retriever = vector_index.as_retriever(
+            similarity_top_k=5,
+            # vector_store_query_mode="mmr"
+        )
+        kg_retriever = None
 
         if kg:
             # Graph store params
@@ -313,31 +331,41 @@ class IndexEngine():
             storage_context = StorageContext.from_defaults(graph_store=graph_store)
 
             # Indexing into a knowledge graph
-            kg_index = KnowledgeGraphIndex.from_documents(
-                documents,
-                storage_context=storage_context,
-                max_triplets_per_chunk=30,
-                space_name=space_name,
-                edge_types=edge_types,
-                rel_prop_names=rel_prop_names,
-                tags=tags,
-                include_embeddings=True,
-                service_context=service_context,
-                show_progress=True,
-            )
+            if documents is not None:
+                kg_index = KnowledgeGraphIndex.from_documents(
+                    documents,
+                    storage_context=storage_context,
+                    max_triplets_per_chunk=30,
+                    include_embeddings=True,
+                    service_context=service_context,
+                    show_progress=True,
+                )
 
-            # writing to disk
-            kg_index.storage_context.persist(persist_dir="index/kg")
+                kg_retriever = kg_index.as_retriever(
+                    similarity_top_k=5,
+                    graph_store_query_depth=4
+                )
+
+            else:
+                kg_retriever = KnowledgeGraphRAGRetriever(
+                    retriever_mode="keyword",
+                    include_text=True,
+                    service_context=service_context,
+                    storage_context=storage_context,
+                    verbose=True,
+                    graph_traversal_depth=3
+                )
 
         print("Indexing complete")
-        return service_context
+        return vec_retriever, kg_retriever
 
     def fine_tune(self, docs: List[Document],
-                  out_path="models/embedder/F12-FR"):
+                  out_path: str):
         # generate a finetuning qa dataset
         print("Generating finetuning dataset...")
 
         base_embed_model = resolve_embed_model("local:BAAI/bge-large-en-v1.5")
+        base_embed_model.embed_batch_size = 1
 
         if os.path.exists(out_path):
             return LinearAdapterEmbeddingModel(base_embed_model,
@@ -387,45 +415,22 @@ class IndexEngine():
 
         return embed_model
 
-    def as_retriever(self, embed_model="local:BAAI/bge-large-en-v1.5", kg=True, fine_tune=True):
-
-        # count the files in index and if there are none, index the files
-        if (len(list(Path("index/vector").glob("*"))) == 0):
-            documents = self.parse_documents()
-            if fine_tune:
-                embed_model = self.fine_tune(docs=documents)
-            service_context = self.index_documents(documents=documents,
-                                                   embed_model=embed_model, kg=kg)
-        else:
-            embed_model = self.custom_retriever(embed_model=embed_model)
-            service_context = self.get_service_context(embed_model=embed_model)
-
+    def as_retriever(self, index_name: str, embed_model="local:BAAI/bge-large-en-v1.5", kg=True, fine_tune=True, build_index=True, ):
         print("Loading engine...")
+        if build_index:
+            documents = self.parse_documents(index_name=index_name)
+            if fine_tune:
+                embed_model = self.fine_tune(docs=documents, out_path="models/embedder/" + index_name)
+        else:
+            documents = None
 
-        storage_context = StorageContext.from_defaults(persist_dir="index/vector")
-        vector_index = load_index_from_storage(storage_context,
-                                               service_context=service_context)
+        vec_retriever, kg_retriever = self.get_retrievers(documents=documents,
+                                                   embed_model=embed_model, kg=kg, index_name=index_name)
 
-        vector_retriever = VectorIndexRetriever(index=vector_index)
+        self.retriever = vec_retriever
 
-        self.retriever = vector_retriever
-
-        if kg :
-            storage_context = StorageContext.from_defaults(persist_dir="index/kg")
-            kg_index = load_index_from_storage(storage_context,
-                                            service_context=service_context)
-
-            kg_retriever = KnowledgeGraphRAGRetriever(
-                index=kg_index,
-                retriever_mode="keyword",
-                include_text=True,
-                service_context=service_context,
-                storage_context=storage_context,
-                verbose=True,
-                graph_traversal_depth=3
-            )
-
-            self.retriever = CustomRetriever(vector_retriever, kg_retriever)
+        if kg_retriever is not None:
+            self.retriever = CustomRetriever(vec_retriever, kg_retriever)
 
         print("Engine loaded")
         return self.retriever
