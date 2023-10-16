@@ -30,14 +30,10 @@ def get_meta_if_possible(nodes: List[NodeWithScore]):
 
 def input_modifier(question: str, state: dict, is_chat: bool = False) -> str:
     try:
-        if shared.settings["use_llama_index"] is False:
-            print("Llama Index is disabled")
-            return question
-
         if shared.index is None:
             shared.index = IndexEngine().as_retriever(kg=False,
                                                       fine_tune=False,
-                                                      build_index=True,
+                                                      build_index=False,
                                                       index_name="conf_attach")
 
         with torch.no_grad():

@@ -312,7 +312,7 @@ class IndexEngine():
                 show_progress=True
             )
         else:
-            vector_index = VectorStoreIndex.from_vector_store(vector_store=connect_PostgreSQL(index_name))
+            vector_index = VectorStoreIndex.from_vector_store(vector_store=connect_PostgreSQL(index_name), service_context=service_context)
 
         vec_retriever = vector_index.as_retriever(
             similarity_top_k=5,

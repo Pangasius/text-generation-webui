@@ -32,7 +32,6 @@ settings = {
     'show_controls': True,
     'start_with': '',
     'mode': 'chat',
-    'use_llama_index': False,
     'chat_style': 'cai-chat',
     'prompt-default': 'QA',
     'prompt-notebook': 'QA',
