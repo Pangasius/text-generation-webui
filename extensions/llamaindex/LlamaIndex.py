@@ -91,9 +91,9 @@ def connect_PostgreSQL(index_name: str):
     vector_store = PGVectorStore.from_params(
         database="llamaindex",
         host="localhost",
-        password="pgres",
+        password="index",
         port="5432",
-        user="pgres",
+        user="llama",
         table_name=index_name,
         embed_dim=1024,  # embedding dimension
     )
@@ -296,7 +296,7 @@ class IndexEngine():
 
         return documents
 
-    def get_retrievers(self, documents: List[Document] | None,
+    def get_retrievers(self, documents,
                        index_name : str,
                        embed_model="local:BAAI/bge-large-en-v1.5", kg=True):
 
@@ -315,7 +315,7 @@ class IndexEngine():
             vector_index = VectorStoreIndex.from_vector_store(vector_store=connect_PostgreSQL(index_name), service_context=service_context)
 
         vec_retriever = vector_index.as_retriever(
-            similarity_top_k=5,
+            similarity_top_k=3,
             # vector_store_query_mode="mmr"
         )
         kg_retriever = None
@@ -342,7 +342,7 @@ class IndexEngine():
                 )
 
                 kg_retriever = kg_index.as_retriever(
-                    similarity_top_k=5,
+                    similarity_top_k=3,
                     graph_store_query_depth=4
                 )
 

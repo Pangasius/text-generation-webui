@@ -163,6 +163,7 @@ def get_token_ids(prompt):
 
 
 def get_max_prompt_length(state):
+    return 3800
     return state['truncation_length'] - state['max_new_tokens']
 
 
