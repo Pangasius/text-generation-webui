@@ -37,6 +37,8 @@
 .*llava:
   instruction_template: 'LLaVA'
   custom_stopping_strings: '"\n###"'
+.*llava.*1.5:
+  instruction_template: 'LLaVA-v1'
 .*wizard.*mega:
   instruction_template: 'Wizard-Mega'
   custom_stopping_strings: '"</s>"'
@@ -87,7 +89,7 @@
 .*mpt-.*instruct:
   instruction_template: 'Alpaca'
 .*mpt-.*chat:
-  instruction_template: 'MPT-Chat'
+  instruction_template: 'ChatML'
 (?!.*-flan-)(?!.*-t5-).*lamini-:
   instruction_template: 'Alpaca'
 .*incite.*chat:
@@ -174,5 +176,7 @@
   instruction_template: 'Llama-v2'
 .*mistral.*instruct:
   instruction_template: 'Mistral'
-.*AWQ:
-  n_batch: 1
+.*mistral.*openorca:
+  instruction_template: 'ChatML'
+.*(WizardCoder-Python-34B-V1.0|Phind-CodeLlama-34B-v2|CodeBooga-34B-v0.1):
+  instruction_template: 'Alpaca'

@@ -8,6 +8,7 @@ from pathlib import Path
 import torch
 import transformers
 from accelerate import infer_auto_device_map, init_empty_weights
+from accelerate.utils import is_ccl_available, is_xpu_available
 from transformers import (
     AutoConfig,
     AutoModel,
@@ -38,8 +39,12 @@ if shared.args.deepspeed:
     # Distributed setup
     local_rank = shared.args.local_rank if shared.args.local_rank is not None else int(os.getenv("LOCAL_RANK", "0"))
     world_size = int(os.getenv("WORLD_SIZE", "1"))
-    torch.cuda.set_device(local_rank)
-    deepspeed.init_distributed()
+    if is_xpu_available() and is_ccl_available():
+        torch.xpu.set_device(local_rank)
+        deepspeed.init_distributed(backend="ccl")
+    else:
+        torch.cuda.set_device(local_rank)
+        deepspeed.init_distributed()
     ds_config = generate_ds_config(shared.args.bf16, 1 * world_size, shared.args.nvme_offload_dir)
     dschf = HfDeepSpeedConfig(ds_config)  # Keep this object alive for the Transformers integration
 
@@ -90,7 +95,7 @@ def load_model(model_name, loader=None):
     if any((shared.args.xformers, shared.args.sdp_attention)):
         llama_attn_hijack.hijack_llama_attention()
 
-    logger.info(f"Loaded the model in {(time.time()-t0):.2f} seconds.\n")
+    logger.info(f"Loaded the model in {(time.time()-t0):.2f} seconds.")
     return model, tokenizer
 
 
@@ -137,6 +142,9 @@ def huggingface_loader(model_name):
         if torch.backends.mps.is_available():
             device = torch.device('mps')
             model = model.to(device)
+        elif is_xpu_available():
+            device = torch.device("xpu")
+            model = model.to(device)
         else:
             model = model.cuda()
 
@@ -149,8 +157,10 @@ def huggingface_loader(model_name):
 
     # Load with quantization and/or offloading
     else:
-        if not any((shared.args.cpu, torch.cuda.is_available(), torch.backends.mps.is_available())):
-            logger.warning('torch.cuda.is_available() returned False. This means that no GPU has been detected. Falling back to CPU mode.')
+
+        if not any((shared.args.cpu, torch.cuda.is_available(), is_xpu_available(), torch.backends.mps.is_available())):
+            logger.warning('torch.cuda.is_available() and is_xpu_available() returned False. This means that no GPU has been detected. Falling back to CPU mode.')
+
             shared.args.cpu = True
 
         if shared.args.cpu:
@@ -277,24 +287,24 @@ def ctransformers_loader(model_name):
     model, tokenizer = ctrans.from_pretrained(model_file)
     return model, tokenizer
 
+
 def AutoAWQ_loader(model_name):
-   from awq import AutoAWQForCausalLM
+    from awq import AutoAWQForCausalLM
 
-   model_dir = Path(f'{shared.args.model_dir}/{model_name}')
+    model_dir = Path(f'{shared.args.model_dir}/{model_name}')
 
-   if shared.args.deepspeed:
-       logger.warn("AutoAWQ is incompatible with deepspeed")
+    model = AutoAWQForCausalLM.from_quantized(
+                quant_path=model_dir,
+                max_new_tokens=shared.args.max_seq_len,
+                trust_remote_code=shared.args.trust_remote_code,
+                fuse_layers=not shared.args.no_inject_fused_attention,
+                max_memory=get_max_memory_dict(),
+                batch_size=1,
+                safetensors=any(model_dir.glob('*.safetensors')),
+            )
 
-   model = AutoAWQForCausalLM.from_quantized(
-       quant_path=model_dir,
-       max_new_tokens=shared.args.max_seq_len,
-       trust_remote_code=shared.args.trust_remote_code,
-       fuse_layers=not shared.args.no_inject_fused_attention,
-       max_memory=get_max_memory_dict(),
-       batch_size=shared.args.n_batch,
-       safetensors=not shared.args.trust_remote_code)
+    return model
 
-   return model
 
 def GPTQ_loader(model_name):
 
@@ -353,7 +363,12 @@ def RWKV_loader(model_name):
     '''
     from modules.RWKV import RWKVModel, RWKVTokenizer
 
-    model = RWKVModel.from_pretrained(Path(f'{shared.args.model_dir}/{model_name}'), dtype="fp32" if shared.args.cpu else "bf16" if shared.args.bf16 else "fp16", device="cpu" if shared.args.cpu else "cuda")
+    model = RWKVModel.from_pretrained(
+        Path(f'{shared.args.model_dir}/{model_name}'),
+        dtype="fp32" if shared.args.cpu else "bf16" if shared.args.bf16 else "fp16",
+        device="cpu" if shared.args.cpu else "xpu" if is_xpu_available() else "cuda"
+    )
+
     tokenizer = RWKVTokenizer.from_pretrained(Path(shared.args.model_dir))
     return model, tokenizer
 
@@ -371,7 +386,10 @@ def get_max_memory_dict():
     # If --auto-devices is provided standalone, try to get a reasonable value
     # for the maximum memory of device :0
     elif shared.args.auto_devices:
-        total_mem = (torch.cuda.get_device_properties(0).total_memory / (1024 * 1024))
+        if is_xpu_available():
+            total_mem = (torch.xpu.get_device_properties(0).total_memory / (1024 * 1024))
+        else:
+            total_mem = (torch.cuda.get_device_properties(0).total_memory / (1024 * 1024))
         suggestion = round((total_mem - 1000) / 1000) * 1000
         if total_mem - suggestion < 800:
             suggestion -= 1000
@@ -386,7 +404,10 @@ def get_max_memory_dict():
 def clear_torch_cache():
     gc.collect()
     if not shared.args.cpu:
-        torch.cuda.empty_cache()
+        if is_xpu_available():
+            torch.xpu.empty_cache()
+        else:
+            torch.cuda.empty_cache()
 
 
 def unload_model():

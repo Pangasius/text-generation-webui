@@ -8,6 +8,7 @@ from pathlib import Path
 import gradio as gr
 import psutil
 import torch
+from transformers import is_torch_xpu_available
 
 from modules import loaders, shared, ui, utils
 from modules.logging_colors import logger
@@ -27,8 +28,12 @@ def create_ui():
 
     # Finding the default values for the GPU and CPU memories
     total_mem = []
-    for i in range(torch.cuda.device_count()):
-        total_mem.append(math.floor(torch.cuda.get_device_properties(i).total_memory / (1024 * 1024)))
+    if is_torch_xpu_available():
+        for i in range(torch.xpu.device_count()):
+            total_mem.append(math.floor(torch.xpu.get_device_properties(i).total_memory / (1024 * 1024)))
+    else:
+        for i in range(torch.cuda.device_count()):
+            total_mem.append(math.floor(torch.cuda.get_device_properties(i).total_memory / (1024 * 1024)))
 
     default_gpu_mem = []
     if shared.args.gpu_memory is not None and len(shared.args.gpu_memory) > 0:
@@ -86,8 +91,8 @@ def create_ui():
                             shared.gradio['threads_batch'] = gr.Slider(label="threads_batch", minimum=0, step=1, maximum=32, value=shared.args.threads_batch)
                             shared.gradio['n_batch'] = gr.Slider(label="n_batch", minimum=1, maximum=2048, value=shared.args.n_batch)
 
-                            shared.gradio['wbits'] = gr.Dropdown(label="wbits", choices=["None", 1, 2, 3, 4, 8], value=str(shared.args.wbits) if shared.args.wbits > 0 else "None")
-                            shared.gradio['groupsize'] = gr.Dropdown(label="groupsize", choices=["None", 32, 64, 128, 1024], value=str(shared.args.groupsize) if shared.args.groupsize > 0 else "None")
+                            shared.gradio['wbits'] = gr.Dropdown(label="wbits", choices=["None", 1, 2, 3, 4, 8], value=shared.args.wbits if shared.args.wbits > 0 else "None")
+                            shared.gradio['groupsize'] = gr.Dropdown(label="groupsize", choices=["None", 32, 64, 128, 1024], value=shared.args.groupsize if shared.args.groupsize > 0 else "None")
                             shared.gradio['model_type'] = gr.Dropdown(label="model_type", choices=["None"], value=shared.args.model_type or "None")
                             shared.gradio['pre_layer'] = gr.Slider(label="pre_layer", minimum=0, maximum=100, value=shared.args.pre_layer[0] if shared.args.pre_layer is not None else 0)
                             shared.gradio['autogptq_info'] = gr.Markdown('* ExLlama_HF is recommended over AutoGPTQ for models derived from LLaMA.')
@@ -103,7 +108,7 @@ def create_ui():
                             shared.gradio['no_inject_fused_mlp'] = gr.Checkbox(label="no_inject_fused_mlp", value=shared.args.no_inject_fused_mlp, info='Affects Triton only. Disable fused MLP. Fused MLP improves performance but uses more VRAM. Disable if running low on VRAM.')
                             shared.gradio['no_use_cuda_fp16'] = gr.Checkbox(label="no_use_cuda_fp16", value=shared.args.no_use_cuda_fp16, info='This can make models faster on some systems.')
                             shared.gradio['desc_act'] = gr.Checkbox(label="desc_act", value=shared.args.desc_act, info='\'desc_act\', \'wbits\', and \'groupsize\' are used for old models without a quantize_config.json.')
-                            shared.gradio['mul_mat_q'] = gr.Checkbox(label="mul_mat_q", value=shared.args.mul_mat_q, info='Recommended in most cases. Improves generation speed by 10-20%.')
+                            shared.gradio['no_mul_mat_q'] = gr.Checkbox(label="no_mul_mat_q", value=shared.args.no_mul_mat_q, info='Disable the mulmat kernels.')
                             shared.gradio['cfg_cache'] = gr.Checkbox(label="cfg-cache", value=shared.args.cfg_cache, info='Create an additional cache for CFG negative prompts.')
                             shared.gradio['no_mmap'] = gr.Checkbox(label="no-mmap", value=shared.args.no_mmap)
                             shared.gradio['mlock'] = gr.Checkbox(label="mlock", value=shared.args.mlock)
@@ -117,7 +122,7 @@ def create_ui():
                             shared.gradio['use_double_quant'] = gr.Checkbox(label="use_double_quant", value=shared.args.use_double_quant)
                             shared.gradio['tensor_split'] = gr.Textbox(label='tensor_split', info='Split the model across multiple GPUs, comma-separated list of proportions, e.g. 18,17')
                             shared.gradio['llama_cpp_seed'] = gr.Number(label='Seed (0 for random)', value=shared.args.llama_cpp_seed)
-                            shared.gradio['trust_remote_code'] = gr.Checkbox(label="trust-remote-code", value=shared.args.trust_remote_code, info='Make sure to inspect the .py files inside the model folder before loading it with this option enabled.')
+                            shared.gradio['trust_remote_code'] = gr.Checkbox(label="trust-remote-code", value=shared.args.trust_remote_code, info='To enable this option, start the web UI with the --trust-remote-code flag. It is necessary for some models.', interactive=shared.args.trust_remote_code)
                             shared.gradio['use_fast'] = gr.Checkbox(label="use_fast", value=shared.args.use_fast, info='Set use_fast=True while loading the tokenizer. May trigger a conversion that takes several minutes.')
                             shared.gradio['disable_exllama'] = gr.Checkbox(label="disable_exllama", value=shared.args.disable_exllama, info='Disable ExLlama kernel.')
                             shared.gradio['gptq_for_llama_info'] = gr.Markdown('GPTQ-for-LLaMa support is currently only kept for compatibility with older GPUs. AutoGPTQ or ExLlama is preferred when compatible. GPTQ-for-LLaMa is installed by default with the webui on supported systems. Otherwise, it has to be installed manually following the instructions here: [instructions](https://github.com/oobabooga/text-generation-webui/blob/main/docs/GPTQ-models-(4-bit-mode).md#installation-1).')
@@ -225,16 +230,11 @@ def load_lora_wrapper(selected_loras):
 
 def download_model_wrapper(repo_id, specific_file, progress=gr.Progress(), return_links=False, check=False):
     try:
-        downloader_module = importlib.import_module("download-model")
-        downloader = downloader_module.ModelDownloader()
-
         progress(0.0)
-        yield ("Cleaning up the model/branch names")
+        downloader = importlib.import_module("download-model").ModelDownloader()
         model, branch = downloader.sanitize_model_and_branch_names(repo_id, None)
-
         yield ("Getting the download links from Hugging Face")
         links, sha256, is_lora, is_llamacpp = downloader.get_download_links_from_huggingface(model, branch, text_only=False, specific_file=specific_file)
-
         if return_links:
             yield '\n\n'.join([f"`{Path(link).name}`" for link in links])
             return
@@ -242,7 +242,6 @@ def download_model_wrapper(repo_id, specific_file, progress=gr.Progress(), retur
         yield ("Getting the output folder")
         base_folder = shared.args.lora_dir if is_lora else shared.args.model_dir
         output_folder = downloader.get_output_folder(model, branch, is_lora, is_llamacpp=is_llamacpp, base_folder=base_folder)
-
         if check:
             progress(0.5)
             yield ("Checking previously downloaded files")
@@ -250,7 +249,7 @@ def download_model_wrapper(repo_id, specific_file, progress=gr.Progress(), retur
             progress(1.0)
         else:
             yield (f"Downloading file{'s' if len(links) > 1 else ''} to `{output_folder}/`")
-            downloader.download_model_files(model, branch, links, sha256, output_folder, progress_bar=progress, threads=1, is_llamacpp=is_llamacpp)
+            downloader.download_model_files(model, branch, links, sha256, output_folder, progress_bar=progress, threads=4, is_llamacpp=is_llamacpp)
             yield ("Done!")
     except:
         progress(1.0)

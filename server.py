@@ -1,24 +1,17 @@
-import warnings
-from extensions.llamaindex.LlamaIndex import IndexEngine
-
-import modules.one_click_installer_check
-from modules.block_requests import OpenMonkeyPatch, RequestBlocker
-from modules.logging_colors import logger
-
-with RequestBlocker():
-    import gradio as gr
-
-import matplotlib
-
-import json
 import os
+import yaml
+import json
 import sys
 import time
+import warnings
 from functools import partial
 from pathlib import Path
 from threading import Lock
 
-import yaml
+import matplotlib
+
+from modules.block_requests import OpenMonkeyPatch, RequestBlocker
+from modules.logging_colors import logger
 
 import modules.extensions as extensions_module
 from modules import (
@@ -45,12 +38,15 @@ from modules.models_settings import (
 )
 from modules.utils import gradio
 
-matplotlib.use('Agg')  # This fixes LaTeX rendering on some systems
+with RequestBlocker():
+    import gradio as gr
 
 os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
 os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
+warnings.filterwarnings('ignore', category=UserWarning, message='Using the update method is deprecated')
 
+matplotlib.use('Agg')  # This fixes LaTeX rendering on some systems
 
 def create_interface():
 
