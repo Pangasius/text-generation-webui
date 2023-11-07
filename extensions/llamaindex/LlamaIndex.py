@@ -4,6 +4,8 @@ from pathlib import Path
 import glob
 import regex as re
 
+import torch
+
 import os
 from typing import Dict, List, Optional
 
@@ -17,21 +19,16 @@ from pdf2docx import Converter
 
 from llama_index import (
     Document,
-    StorageContext,
-    VectorStoreIndex,
     download_loader,
-    load_index_from_storage,
     SimpleDirectoryReader,
-    KnowledgeGraphIndex,
     ServiceContext,
     PromptHelper,
     QueryBundle,
 )
 
 from llama_index.llms import HuggingFaceLLM
-from llama_index.graph_stores import NebulaGraphStore
 
-from llama_index.schema import NodeWithScore
+from llama_index.schema import NodeWithScore, BaseNode
 
 from llama_index.readers.base import BaseReader
 
@@ -57,48 +54,11 @@ from llama_index.finetuning.embeddings.common import (
 
 import modules.shared as shared
 
+from extensions.llamaindex.connections import connect_NebulaGraph, connect_PostgreSQL
+
+from tqdm import tqdm
+
 pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
-
-os.environ["NEBULA_USER"] = "root"
-os.environ["NEBULA_PASSWORD"] = "nebula"
-os.environ[
-    "NEBULA_ADDRESS"
-] = "127.0.0.1:9669"  # assumed we have NebulaGraph 3.5.0 or newer installed locally
-
-# Assume that the graph has already been created
-# Create a NebulaGraph cluster with:
-# Option 0: `curl -fsSL nebula-up.siwei.io/install.sh | bash`
-# Option 1: NebulaGraph Docker Extension https://hub.docker.com/extensions/weygu/nebulagraph-dd-ext
-# and that the graph space is called "llamaindex"
-# If not, create it with the following commands from NebulaGraph's console:
-# CREATE SPACE llamaindex(vid_type=FIXED_STRING(256), partition_num=1, replica_factor=1);
-# :sleep 10;
-# USE llamaindex;
-# CREATE TAG entity(name string);
-# CREATE EDGE relationship(relationship string);
-# CREATE TAG INDEX entity_index ON entity(name(256));
-
-space_name = "llamaindex"
-edge_types, rel_prop_names = ["relationship"], [
-    "relationship"
-]  # default, could be omit if create from an empty kg
-tags = ["entity"]  # default, could be omit if create from an empty kg
-
-
-def connect_PostgreSQL(index_name: str):
-    from llama_index.vector_stores import PGVectorStore
-
-    vector_store = PGVectorStore.from_params(
-        database="llamaindex",
-        host="localhost",
-        password="index",
-        port="5432",
-        user="llama",
-        table_name=index_name,
-        embed_dim=1024,  # embedding dimension
-    )
-
-    return vector_store
 
 
 class CustomRetriever(BaseRetriever):
@@ -169,27 +129,33 @@ class CustomReader(BaseReader):
 
 
 class IndexEngine():
-    def __init__(self):
+    def __init__(self, index_name: str):
         print("Loading model...")
         self.retriever = None
 
         print("Model loaded")
-
-    def get_service_context(self, embed_model="local:BAAI/bge-large-en-v1.5"):
-        prompt_helper = PromptHelper(tokenizer=shared.tokenizer)
 
         llm = HuggingFaceLLM(model=shared.model,
                              tokenizer=shared.tokenizer,
                              max_new_tokens=shared.settings['max_new_tokens'],
                              context_window=shared.args.n_ctx)
 
-        embed_model = resolve_embed_model("local:BAAI/bge-large-en-v1.5")
+        print("Max new tokens:", shared.settings['max_new_tokens'])
+        print("Context window:", shared.args.n_ctx)
 
-        embed_model.embed_batch_size = 1
+        self.llm = llm
+        self.index_name = index_name
+
+    def get_service_context(self):
+        prompt_helper = PromptHelper(tokenizer=shared.tokenizer)
+
+        self.embed_model = resolve_embed_model(self.embed_model)
+
+        self.embed_model.embed_batch_size = 1
 
         service_context = ServiceContext.\
-            from_defaults(llm=llm,
-                          embed_model=embed_model,
+            from_defaults(llm=self.llm,
+                          embed_model=self.embed_model,
                           prompt_helper=prompt_helper,
                           chunk_size=1024,
                           context_window=min(512, shared.args.n_ctx))
@@ -220,8 +186,7 @@ class IndexEngine():
                 print("Error extracting zip file", paths, ":", e)
                 continue
 
-    @staticmethod
-    def read_documents(documents: List[Document], index_name: str):
+    def read_documents(self, documents: List[Document]):
         print("Unstructured reading files...")
 
         unstructuredReader = download_loader("UnstructuredReader")
@@ -229,24 +194,18 @@ class IndexEngine():
 
         toBeProcessed = []
 
-        for paths in glob.glob("./examples/" + index_name + "/**/*.*", recursive=True):
+        for paths in tqdm(glob.glob("./examples/" + self.index_name + "/**/*.*", recursive=True)):
             # Skip the produced document and all unsupported files
             if re.match(r".*\.((sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(xlsx))", paths):
                 if re.match(r".*\.((json))", paths):
-                    print("+ ", paths)
                     toBeProcessed.append(paths)
-                else:
-                    print("- ", paths)
                 continue
 
             try:
                 documents += unstructuredLoader.load_data(file=Path(paths))
                 documents[-1].metadata["url"] = paths
                 documents[-1].metadata["title"] = paths.split("/")[-1]
-                print("+ ", paths)
             except Exception as e:
-                print("- ", paths)
-                print("Error loading file ", paths, ":", e)
                 continue
 
         reader = SimpleDirectoryReader(input_files=toBeProcessed,
@@ -254,178 +213,134 @@ class IndexEngine():
                                        file_extractor={".json": CustomReader()})
         documents += reader.load_data()
 
-    @staticmethod
-    def filter_out(documents: List[Document]):
-        print("Filtering documents...")
-
-        for document in documents:
-            if (document.text.__contains__("Problem authenticating")
-                    or document.text.__contains__("File Generator")
-                    or document.text.__contains__("MIT P2P : Status")
-                    or documents.__contains__("Defects – digest")):
-                documents.remove(document)
-                continue
-
-            # remove all lines line breaks bigger than two \n
-            document.text = re.sub(r"\n{2,}", "\n", document.text)
-
-            if document.text == "":
-                documents.remove(document)
-                continue
-
-    def parse_documents(self, index_name: str):
+    def parse_documents(self):
         print("Indexing documents...")
 
         # self.unzip_files()
 
         documents = []
-        self.read_documents(documents, index_name=index_name)
+        self.read_documents(documents)
 
-        initial_size = sum(list(map(lambda x: len(x.text), documents)))
+        print("Size:", sum(list(map(lambda x: len(x.text), documents))))
 
-        self.filter_out(documents)
+        # transform documents into nodes
 
-        print("Initial size:", initial_size)
-        print("Final size:", sum(list(map(lambda x: len(x.text), documents))))
+        node_parser = SimpleNodeParser.from_defaults(chunk_size=1024,
+                                                     chunk_overlap=128)
 
-        # save all documents to a file
-        with open("examples/private/documents.txt", "w") as f:
-            for document in documents:
-                f.write(document.text)
-                f.write("\n\n\n")
+        nodes = node_parser.get_nodes_from_documents(documents, show_progress=True)
 
-        return documents
+        # print the average chunk size
+        print("Average chunk size:", sum(list(map(lambda x: len(x.text), nodes))) / len(nodes))
 
-    def get_retrievers(self, documents,
-                       index_name : str,
-                       embed_model="local:BAAI/bge-large-en-v1.5", kg=True):
+        # print the maximum chunk size
+        print("Maximum chunk size:", max(list(map(lambda x: len(x.text), nodes))))
+
+        return nodes
+
+    def save_nodes(self, nodes: List[BaseNode], kg=False):
+
+        service_context = self.get_service_context()
+
+        print("Indexing into a vector store...")
+        vector_store = connect_PostgreSQL(self.index_name, service_context=service_context)
+        vector_store.build_index_from_nodes(nodes=nodes)
+
+        if kg:
+            print("Indexing into a knowledge graph...")
+            kg_store = connect_NebulaGraph(service_context=service_context)
+            kg_store.build_index_from_nodes(nodes=nodes)
+
+    def get_retrievers(self, kg=True):
 
         print("Indexing documents...")
-        service_context = self.get_service_context(embed_model=embed_model)
 
-        # Indexing into a vector store
-        if documents is not None:
-            vector_index = VectorStoreIndex.from_documents(
-                documents=documents,
-                service_context=service_context,
-                storage_context=StorageContext.from_defaults(vector_store=connect_PostgreSQL(index_name)),
-                show_progress=True
-            )
-        else:
-            vector_index = VectorStoreIndex.from_vector_store(vector_store=connect_PostgreSQL(index_name), service_context=service_context)
+        service_context = self.get_service_context()
+
+        vector_index = connect_PostgreSQL(self.index_name, service_context=service_context)
 
         vec_retriever = vector_index.as_retriever(
             similarity_top_k=3,
             # vector_store_query_mode="mmr"
         )
-        kg_retriever = None
 
+        kg_retriever = None
         if kg:
             # Graph store params
-            graph_store = NebulaGraphStore(
-                space_name=space_name,
-                edge_types=edge_types,
-                rel_prop_names=rel_prop_names,
-                tags=tags,
-            )
-            storage_context = StorageContext.from_defaults(graph_store=graph_store)
+            graph_store = connect_NebulaGraph(service_context=service_context)
 
-            # Indexing into a knowledge graph
-            if documents is not None:
-                kg_index = KnowledgeGraphIndex.from_documents(
-                    documents,
-                    storage_context=storage_context,
-                    max_triplets_per_chunk=30,
-                    include_embeddings=True,
-                    service_context=service_context,
-                    show_progress=True,
-                )
-
-                kg_retriever = kg_index.as_retriever(
-                    similarity_top_k=3,
-                    graph_store_query_depth=4
-                )
-
-            else:
-                kg_retriever = KnowledgeGraphRAGRetriever(
-                    retriever_mode="keyword",
-                    include_text=True,
-                    service_context=service_context,
-                    storage_context=storage_context,
-                    verbose=True,
-                    graph_traversal_depth=3
-                )
+            kg_retriever = graph_store.as_retriever()
 
         print("Indexing complete")
         return vec_retriever, kg_retriever
 
-    def fine_tune(self, docs: List[Document],
+    def fine_tune(self, nodes: List[BaseNode] | None,
                   out_path: str):
-        # generate a finetuning qa dataset
-        print("Generating finetuning dataset...")
 
         base_embed_model = resolve_embed_model("local:BAAI/bge-large-en-v1.5")
         base_embed_model.embed_batch_size = 1
 
         if os.path.exists(out_path):
+            print("Loading already trained finetuned model...")
             return LinearAdapterEmbeddingModel(base_embed_model,
                                                out_path)
 
-        dataset_path = "examples/private/dataset.json"
+        dataset_path = out_path + ".json"
 
-        if not os.path.exists(dataset_path):
-            parser = SimpleNodeParser.from_defaults()
-            nodes = parser.get_nodes_from_documents(docs, show_progress=True)
+        print("Dataset path:", dataset_path)
 
+        if not os.path.exists(dataset_path) and nodes is not None:
+            print("Generating QA dataset...")
             dataset = generate_qa_embedding_pairs(nodes,
                                                   llm=self.llm,
-                                                  num_questions_per_chunk=5)
+                                                  num_questions_per_chunk=2)
 
             dataset.save_json(dataset_path)
-        else:
+        elif nodes is None:
             dataset = EmbeddingQAFinetuneDataset.from_json(dataset_path)
+        else:
+            raise Exception("Dataset not found but trying to load it")
 
-        # [Optional] Load
-        # dataset = EmbeddingQAFinetuneDataset.from_json("dataset.json")
-
+        print("Finetuning...")
         finetune_engine = EmbeddingAdapterFinetuneEngine(
             dataset,
             base_embed_model,
             model_output_path=out_path,
             # bias=True,
             dim=1024,
-            epochs=4,
-            batch_size=12,
+            epochs=5,
+            batch_size=1,
             verbose=True,
-            # optimizer_class=torch.optim.SGD,
-            # optimizer_params={"lr": 0.01}
+            optimizer_class=torch.optim.SGD,
+            optimizer_params={"lr": 0.0001}
         )
 
         finetune_engine.finetune()
 
-        return LinearAdapterEmbeddingModel(base_embed_model,
+        self.embed_model = LinearAdapterEmbeddingModel(base_embed_model,
                                            out_path)
 
-    def custom_retriever(self, embed_model="local:BAAI/bge-large-en-v1.5"):
+    def custom_retriever(self, embed_model):
         if embed_model.startswith("custom:"):
-            embed_model = LinearAdapterEmbeddingModel(
+            self.embed_model = LinearAdapterEmbeddingModel(
                 resolve_embed_model("local:BAAI/bge-large-en-v1.5"),
                 embed_model[7:]
             )
 
-        return embed_model
-
-    def as_retriever(self, index_name: str, embed_model="local:BAAI/bge-large-en-v1.5", kg=True, fine_tune=True, build_index=True, ):
+    def as_retriever(self, embed_model="local:BAAI/bge-large-en-v1.5", kg=True, fine_tune=True, build_index=True, ):
+        self.custom_retriever(embed_model)
+        
         print("Loading engine...")
         if build_index:
-            documents = self.parse_documents(index_name=index_name)
-            if fine_tune:
-                embed_model = self.fine_tune(docs=documents, out_path="models/embedder/" + index_name)
+            nodes = self.parse_documents()
+            self.save_nodes(nodes, kg=kg)
         else:
-            documents = None
+            nodes = None
 
-        vec_retriever, kg_retriever = self.get_retrievers(documents=documents,
-                                                   embed_model=embed_model, kg=kg, index_name=index_name)
+        if fine_tune:
+            self.fine_tune(nodes=nodes, out_path="models/embedder/" + self.index_name)
+
+        vec_retriever, kg_retriever = self.get_retrievers(kg=kg)
 
         self.retriever = vec_retriever
 

@@ -1,6 +1,6 @@
 import datetime
 import traceback
-from typing import Generator, List
+from typing import List
 import torch
 from extensions.llamaindex.LlamaIndex import IndexEngine
 from llama_index.prompts.default_prompts import DEFAULT_TREE_SUMMARIZE_PROMPT
@@ -17,7 +17,16 @@ from wandb.sdk.data_types.trace_tree import Trace
 
 wandb.init(project="Haulogy-First-Test")
 
-DATASET = "conf_unl_embed"
+DATASET = "conf_custo_embed"
+
+
+def setup():
+    if shared.index is not None:
+        print("Index already loaded!")
+
+    shared.index = IndexEngine(index_name=DATASET).as_retriever(kg=False,
+                                            fine_tune=False,
+                                            build_index=False)
 
 
 def get_meta_if_possible(nodes: List[NodeWithScore]):
@@ -42,12 +51,6 @@ def get_meta_if_possible(nodes: List[NodeWithScore]):
 def input_modifier(question: str, state: dict, is_chat: bool = False) -> str:
     state['last_question'] = question
     try:
-        if shared.index is None:
-            shared.index = IndexEngine().as_retriever(kg=False,
-                                                      fine_tune=False,
-                                                      build_index=False,
-                                                      index_name=DATASET)
-
         with torch.no_grad():
             resp = shared.index.retrieve(question)
 
