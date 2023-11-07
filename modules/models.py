@@ -71,11 +71,12 @@ def load_model(model_name, loader=None):
         'AutoAWQ': AutoAWQ_loader,
     }
 
+    metadata = get_model_metadata(model_name)
     if loader is None:
         if shared.args.loader is not None:
             loader = shared.args.loader
         else:
-            loader = get_model_metadata(model_name)['loader']
+            loader = metadata['loader']
             if loader is None:
                 logger.error('The path to the model does not exist. Exiting.')
                 return None, None
@@ -95,6 +96,7 @@ def load_model(model_name, loader=None):
     if any((shared.args.xformers, shared.args.sdp_attention)):
         llama_attn_hijack.hijack_llama_attention()
 
+    shared.settings.update({k: v for k, v in metadata.items() if k in shared.settings})
     logger.info(f"Loaded the model in {(time.time()-t0):.2f} seconds.")
     return model, tokenizer
 
@@ -123,8 +125,13 @@ def huggingface_loader(model_name):
     params = {
         'low_cpu_mem_usage': True,
         'trust_remote_code': shared.args.trust_remote_code,
-        'torch_dtype': torch.bfloat16 if shared.args.bf16 else torch.float16
+        'torch_dtype': torch.bfloat16 if shared.args.bf16 else torch.float16,
+        'use_safetensors': True if shared.args.force_safetensors else None
     }
+
+    if shared.args.use_flash_attention_2:
+        params['use_flash_attention_2'] = True
+
     config = AutoConfig.from_pretrained(path_to_model, trust_remote_code=params['trust_remote_code'])
 
     if 'chatglm' in model_name.lower():

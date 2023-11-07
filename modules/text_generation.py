@@ -56,7 +56,10 @@ def _generate_reply(question, state, stopping_strings=None, is_chat=False, escap
 
     # Find the stopping strings
     all_stop_strings = []
-    for st in (stopping_strings, ast.literal_eval(f"[{state['custom_stopping_strings']}]")):
+    for st in (stopping_strings, state['custom_stopping_strings']):
+        if type(st) is str:
+            st = ast.literal_eval(f"[{st}]")
+
         if type(st) is list and len(st) > 0:
             all_stop_strings += st
 
@@ -275,7 +278,7 @@ def apply_stopping_strings(reply, all_stop_strings):
 
 def generate_reply_HF(question, original_question, seed, state, stopping_strings=None, is_chat=False):
     generate_params = {}
-    for k in ['max_new_tokens', 'do_sample', 'temperature', 'top_p', 'typical_p', 'repetition_penalty', 'presence_penalty', 'frequency_penalty', 'repetition_penalty_range', 'encoder_repetition_penalty', 'top_k', 'min_length', 'no_repeat_ngram_size', 'num_beams', 'penalty_alpha', 'length_penalty', 'early_stopping', 'tfs', 'top_a', 'mirostat_mode', 'mirostat_tau', 'mirostat_eta', 'guidance_scale']:
+    for k in ['max_new_tokens', 'do_sample', 'temperature', 'temperature_last', 'top_p', 'min_p', 'typical_p', 'repetition_penalty', 'presence_penalty', 'frequency_penalty', 'repetition_penalty_range', 'encoder_repetition_penalty', 'top_k', 'min_length', 'no_repeat_ngram_size', 'num_beams', 'penalty_alpha', 'length_penalty', 'early_stopping', 'tfs', 'top_a', 'mirostat_mode', 'mirostat_tau', 'mirostat_eta', 'guidance_scale']:
         generate_params[k] = state[k]
 
     if state['negative_prompt'] != '':
