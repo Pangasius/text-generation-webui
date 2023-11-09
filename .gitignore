@@ -1,7 +1,6 @@
 /cache
 /characters
 /css
-/extensions
 /grammars
 /installer_files
 /logs
@@ -48,7 +47,6 @@ installer_files
 /CMD_FLAGS.txt
 
 examples/
-index/
 wandb/
 
 
