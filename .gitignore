@@ -50,3 +50,6 @@ installer_files
 examples/
 index/
 wandb/
+
+
+.pylintrc

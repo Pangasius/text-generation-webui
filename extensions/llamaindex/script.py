@@ -1,41 +1,63 @@
+"""Module that define the extensions basic functions and calls the llama_index_extension."""
 import datetime
 import traceback
 from typing import List
+
 import torch
-from extensions.llamaindex.LlamaIndex import IndexEngine
+
 from llama_index.prompts.default_prompts import DEFAULT_TREE_SUMMARIZE_PROMPT
-from llama_index.schema import MetadataMode
-import modules.shared as shared
-
-from llama_index.schema import NodeWithScore
-
-from modules.text_generation import generate_reply_HF, generate_reply_custom
-from modules.logging_colors import logger
+from llama_index.schema import (
+    MetadataMode,
+    NodeWithScore
+)
 
 import wandb
 from wandb.sdk.data_types.trace_tree import Trace
 
-wandb.init(project="Haulogy-First-Test")
+from modules import shared
+from modules.text_generation import (
+    generate_reply_HF,
+    generate_reply_custom
+)
+from modules.logging_colors import logger
+
+from extensions.llamaindex.llama_index_extension import IndexEngine
 
 DATASET = "conf_custo_embed"
 
 
 def setup():
+    """
+    This function is called once when the extension is loaded.
+    After the model has been loaded.
+    """
     if shared.index is not None:
         print("Index already loaded!")
 
+    wandb.init(project="Haulogy-First-Test")
+
     shared.index = IndexEngine(index_name=DATASET).as_retriever(kg=False,
-                                            fine_tune=False,
+                                            fine_tune=True,
                                             build_index=False)
 
 
-def get_meta_if_possible(nodes: List[NodeWithScore]):
+
+def get_meta_if_possible(nodes: List[NodeWithScore]) -> str:
+    """
+    Try to get the title and url of the nodes, if possible.
+    Also gives the similarity score if it exists.
+
+    Args:
+        nodes (List[NodeWithScore]): List of nodes to get the metadata from
+    Returns:
+        info (str): String containing the metadata
+    """
     info = ""
 
     for node in nodes:
-
         if node.metadata is not None:
-            if node.metadata.keys().__contains__("url") and node.metadata.keys().__contains__("title"):
+            if ("url" in node.metadata.keys()
+                    and "title" in node.metadata.keys()):
                 info += '[' + node.metadata['title'] + '](' + node.metadata['url'] + ')'
         else:
             # put a small extract instead
@@ -49,43 +71,90 @@ def get_meta_if_possible(nodes: List[NodeWithScore]):
 
 
 def input_modifier(question: str, state: dict, is_chat: bool = False) -> str:
+    """
+    This function is called before the question is sent to the model.
+    Adds additional context to the question by asking the retriever
+    for similar questions and adding it to the question.
+
+    Args:
+        question (str): The original question
+        state (dict): The state of the chatbot
+        is_chat (bool, optional): Whether the question is part of a chat.
+                                  Defaults to False.
+
+    Returns:
+        str: The modified question
+    """
+
     state['last_question'] = question
-    try:
-        with torch.no_grad():
-            resp = shared.index.retrieve(question)
 
-            context = "\n\n".join([x.get_content(metadata_mode=MetadataMode.NONE)
-                                    for x in resp])
+    with torch.no_grad():
+        resp = shared.index.retrieve(question)
 
-            state['last_metadata'] = get_meta_if_possible(resp)
+        context = "\n\n".join([x.get_content(metadata_mode=MetadataMode.NONE)
+                                for x in resp])
 
-            question = DEFAULT_TREE_SUMMARIZE_PROMPT.format(context_str=context,
-                                                            query_str=question)
+        state['last_metadata'] = get_meta_if_possible(resp)
 
-    except Exception:
-        traceback.print_exc()
-    finally:
-        return question
+        question = DEFAULT_TREE_SUMMARIZE_PROMPT.format(context_str=context,
+                                                        query_str=question)
+
+    return question
 
 
-def output_modifier(string, state, is_chat=False):
-    if state.keys().__contains__("last_metadata"):
-        output = string + "\nSources : \n\n" + state["last_metadata"] + "\n\n"
-        return output
+def output_modifier(output: str, state: dict, is_chat=False):
+    """
+    This function is called after the model has generated a reply.
+    Adds the sources corresponding to the title, url and similarity score.
+    In case the metadata is not available, it skips this step.
 
-    return string
+    Args:
+        string (str): the original reply
+        state (dict): the state of the chatbot
+        is_chat (bool, optional): _description_. Defaults to False.
+
+    Returns:
+        _type_: _description_
+    """
+    if "last_metadata" in state.keys():
+        output = output + "\nSources : \n\n" + state["last_metadata"] + "\n\n"
+
+    return output
 
 
-def custom_generate_reply(question, original_question, seed, state, stopping_strings=None, is_chat=False):
+def custom_generate_reply(*args, **kwargs):
+    """
+    This function is called when the user presses the "Generate Reply" button.
+    Here it acts as a wrapper to log the inputs and outputs of the model using wandb.
+
+    Args:
+        question (str): the question
+        original_question (str): the original question,
+                                 is not the same as question only
+                                 for non-chat mode
+        seed (int): the generation seed
+        state (dict): the state of the chatbot
+        stopping_strings (List, optional): List containing the strings to
+                                           put an early stop the production.
+                                           Defaults to None.
+        is_chat (bool, optional): Wether the chatbot is in chat mode.
+                                  Defaults to False.
+
+    Yields:
+        str: The generated reply
+    """
 
     generate_func = None
 
     if shared.model_name == 'None' or shared.model is None:
         logger.error("No model is loaded! Select one in the Model tab.")
-        yield ''
         return
 
-    if shared.model.__class__.__name__ in ['LlamaCppModel', 'RWKVModel', 'ExllamaModel', 'Exllamav2Model', 'CtransformersModel']:
+    if shared.model.__class__.__name__ in ['LlamaCppModel',
+                                           'RWKVModel',
+                                           'ExllamaModel',
+                                           'Exllamav2Model',
+                                           'CtransformersModel']:
         generate_func = generate_reply_custom
     else:
         generate_func = generate_reply_HF
@@ -103,30 +172,25 @@ def custom_generate_reply(question, original_question, seed, state, stopping_str
                     "config": shared.model_config})
     ans = ""
 
+    question = args[0]
+    state = args[3]
+
     try:
-        for ans in generate_func(question, original_question, seed, state, stopping_strings, is_chat):
+        for ans in generate_func(*args, **kwargs):
             yield ans
-    except Exception as e:
+
+    except RuntimeError as e:
         traceback.print_exc()
         llm_span.metadata["error"] = str(e)
     finally:
-        last_metadata = state['last_metadata'] if state.keys().__contains__("last_metadata") else ""
+        last_metadata = state['last_metadata'] if "last_metadata" in state.keys() else ""
 
-        last_question = state['last_question'] if state.keys().__contains__("last_question") else ""
+        last_question = state['last_question'] if "last_question" in state.keys() else ""
 
         end_time_ms = round(datetime.datetime.now().timestamp() * 1000)
-        llm_span.inputs = {"query": last_question, 
+        llm_span.inputs = {"query": last_question,
                            "input_documents": last_metadata,
-                           "context" : question}
+                           "context": question}
         llm_span.end_time_ms = end_time_ms
         llm_span.outputs = {"response": ans}
-        llm_span.log(name="HauBot-test-CEO")
-
-        #print("\n\033[91m" + "Start Of Produced Answer" + "\033[0m\n")
-
-        #print("Question : " + question)
-        #print("Answer : " + ans + "\n")
-
-        #print("\033[91m" + "End Of Produced Answer" + "\033[0m\n")
-
-        return
+        #llm_span.log(name="HauBot-test-CEO")

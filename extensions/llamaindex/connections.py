@@ -1,6 +1,15 @@
+"""Module to provide access to different llama_index connections."""
 import os
 
-from llama_index import KnowledgeGraphIndex, StorageContext, VectorStoreIndex
+from llama_index.graph_stores import NebulaGraphStore
+from llama_index.vector_stores import PGVectorStore
+
+from llama_index import (
+    KnowledgeGraphIndex as KGI,
+    ServiceContext,
+    StorageContext,
+    VectorStoreIndex as VSI,
+)
 
 os.environ["NEBULA_USER"] = "root"
 os.environ["NEBULA_PASSWORD"] = "nebula"
@@ -21,32 +30,43 @@ os.environ[
 # CREATE EDGE relationship(relationship string);
 # CREATE TAG INDEX entity_index ON entity(name(256));
 
-space_name = "llamaindex"
-edge_types, rel_prop_names = ["relationship"], [
-    "relationship"
-]  # default, could be omit if create from an empty kg
-tags = ["entity"]  # default, could be omit if create from an empty kg
 
+def connect_nebulagraph(service_context: ServiceContext) -> KGI:
+    """
+    Connect to NebulaGraph and return a KnowledgeGraphIndex object.
 
-def connect_NebulaGraph(service_context):
-    from llama_index.graph_stores import NebulaGraphStore
+    Args:
+        service_context (ServiceContext): ServiceContext object
+
+    Returns:
+        kg_store (KnowledgeGraphIndex): KnowledgeGraphIndex object
+    """
 
     graph_store = NebulaGraphStore(
-        space_name=space_name,
-        edge_types=edge_types,
-        rel_prop_names=rel_prop_names,
-        tags=tags,
+        space_name="llamaindex",
+        edge_types=["relationship"],
+        rel_prop_names=["relationship"],
+        tags=["entity"],
     )
 
     storage_context = StorageContext.from_defaults(graph_store=graph_store)
 
-    kg_store = KnowledgeGraphIndex(storage_context=storage_context, service_context=service_context)
+    kg_store = KGI(storage_context=storage_context, service_context=service_context)
 
     return kg_store
 
 
-def connect_PostgreSQL(index_name: str, service_context):
-    from llama_index.vector_stores import PGVectorStore
+def connect_postgresql(index_name: str, service_context: ServiceContext) -> VSI:
+    """
+    Connect to PostgreSQL and return a VectorStoreIndex object.
+
+    Args:
+        index_name (str): Name of the index
+        service_context (ServiceContext): ServiceContext object
+
+    Returns:
+        vector_index (VectorStoreIndex): VectorStoreIndex object
+    """
 
     vector_store = PGVectorStore.from_params(
         database="llamaindex",
@@ -58,6 +78,7 @@ def connect_PostgreSQL(index_name: str, service_context):
         embed_dim=1024,  # embedding dimension
     )
 
-    vector_index = VectorStoreIndex.from_vector_store(vector_store=vector_store, service_context=service_context)
+    vector_index = VSI.from_vector_store(vector_store=vector_store,
+                                                           service_context=service_context)
 
     return vector_index
