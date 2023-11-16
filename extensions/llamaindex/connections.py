@@ -2,7 +2,7 @@
 import os
 
 from llama_index.graph_stores import NebulaGraphStore
-from llama_index.vector_stores import PGVectorStore
+from llama_index.vector_stores import PGVectorStore, ElasticsearchStore
 
 from llama_index import (
     KnowledgeGraphIndex as KGI,
@@ -77,6 +77,27 @@ def connect_postgresql(index_name: str, service_context: ServiceContext) -> VSI:
         table_name=index_name,
         embed_dim=1024,  # embedding dimension
     )
+
+    vector_index = VSI.from_vector_store(vector_store=vector_store,
+                                                           service_context=service_context)
+
+    return vector_index
+
+
+def connect_elastic(index_name: str, service_context: ServiceContext) -> VSI:
+    """
+    Connect to ElasticSearch and return a VectorStoreIndex object.
+
+    Args:
+        index_name (str): Name of the index
+        service_context (ServiceContext): ServiceContext object
+
+    Returns:
+        vector_index (VectorStoreIndex): VectorStoreIndex object
+    """
+
+    vector_store = ElasticsearchStore(index_name=index_name,
+                                      es_url="http://localhost:9200")
 
     vector_index = VSI.from_vector_store(vector_store=vector_store,
                                                            service_context=service_context)

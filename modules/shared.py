@@ -190,6 +190,8 @@ parser.add_argument('--api-streaming-port', type=int, default=5005, help='DEPREC
 # Lora training
 parser.add_argument('--lora-train', action='store_true', help='Train a LoRA.')
 
+parser.add_argument('--no_launch', action='store_true', help='Do not launch the web UI.')
+
 args = parser.parse_args()
 args_defaults = parser.parse_args([])
 provided_arguments = []

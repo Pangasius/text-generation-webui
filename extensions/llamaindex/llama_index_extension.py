@@ -2,16 +2,13 @@
 from pathlib import Path
 import glob
 import os
-import json
-from typing import Any, List
+from typing import List
 
 import regex as re
-import torch
 import pytesseract
 from tqdm import tqdm
 
 from llama_index import (
-    Document,
     download_loader,
     SimpleDirectoryReader,
     ServiceContext,
@@ -19,9 +16,8 @@ from llama_index import (
     QueryBundle,
 )
 
-from llama_index.llms import HuggingFaceLLM
+from llama_index.llms import HuggingFaceLLM, MockLLM
 from llama_index.schema import NodeWithScore, BaseNode
-from llama_index.readers.base import BaseReader
 from llama_index.retrievers import (
     BaseRetriever,
     VectorIndexRetriever,
@@ -39,10 +35,10 @@ from llama_index.finetuning.embeddings.common import (
     EmbeddingQAFinetuneDataset
 )
 
-
 from modules import shared
 
-from extensions.llamaindex.connections import connect_nebulagraph, connect_postgresql
+from extensions.llamaindex.reader import ConfluenceReader, JiraReader
+from extensions.llamaindex.connections import connect_nebulagraph, connect_postgresql, connect_elastic
 
 pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 
@@ -88,101 +84,66 @@ class CustomRetriever(BaseRetriever):
         return retrieve_nodes
 
 
-class CustomReader(BaseReader):
-    """This is a reader to read the structured from custom json files"""
-
-    def load_data(self, *args: Any, **load_kwargs: Any) -> List[Document]:
-        """
-        Load data from a Json file.
-        The JSON should at least contain "content" and "metadata" keys.
-        The "content" key should contain the text of the document.
-        The "metadata" key should contain a dictionary of metadata.
-        If attachments are present in the metadata they will be thrown away.
-
-        Args:
-            file (Path): Path to the file to load
-
-        Raises:
-            TypeError: If the file argument is not a string
-
-        Returns:
-            List[Document]: The list of LlamaIndex Documents containing
-            the data or an empty list if the file is not valid
-        """
-
-        # Extract the file path from the args
-        file = args[0]
-        if not isinstance(file, str):
-            raise TypeError("file must be a string")
-
-        with open(file, "r", encoding="utf_8") as f:
-            text_dict = f.read()
-
-        try:
-            j = json.loads(text_dict)
-
-            content = j["content"]
-            metadata = j["metadata"]
-
-            # Remove attachments for now
-            if "attachments" in metadata:
-                metadata.pop("attachments")
-
-            doc = Document(text=content, metadata=metadata)
-
-            return [doc]
-        except (KeyError, json.decoder.JSONDecodeError):
-            print("Invalid JSON file")
-            return []
-
-
 class IndexEngine():
     """
     This class is used to index documents and retrieve them.
     It will interact with a vector store and can also interact with a knowledge graph.
     """
-    def __init__(self, index_name: str):
+    def __init__(self, index_name: str, embed_model="local:BAAI/bge-large-en-v1.5"):
         print("Loading model...")
         self.retriever = None
 
-        try:
-            llm = HuggingFaceLLM(model=shared.model,
-                                tokenizer=shared.tokenizer,
-                                max_new_tokens=shared.settings['max_new_tokens'],
-                                context_window=shared.args.n_ctx)
-        except Exception as e:
-            print("Model:", shared.model)
-            print("Tokenizer:", shared.tokenizer)
-            print("Please load a model before running this extension")
-            raise e
+        llm = HuggingFaceLLM(model=shared.model,
+                            tokenizer=shared.tokenizer,
+                            max_new_tokens=shared.settings['max_new_tokens'],
+                            context_window=shared.args.n_ctx)
 
         print("Max new tokens:", shared.settings['max_new_tokens'])
         print("Context window:", shared.args.n_ctx)
 
         self.llm = llm
         self.index_name = index_name
-        self.embed_model = "local:BAAI/bge-large-en-v1.5"
 
-    def get_service_context(self):
+        self._load_embedding_model(embed_model)
+
+        self._load_service_context()
+
+    def _load_embedding_model(self, embed_model: str):
         """
-        Get the service context for the retriever.
-        This will load the embedding model if it's not already loaded.
+        Loads a custom retriever if the embed_model name is
+        of the form "custom:embed_model_name".
+
+        Args:
+            embed_model (str): The name of the embedding model
+        """
+        if embed_model.startswith("custom:"):
+            self.embed_model = AdapterEmbeddingModel(
+                resolve_embed_model(self.embed_model),
+                embed_model[7:],
+                device="cuda:0",
+                adapter_cls=TwoLayerNN
+            )
+        else:
+            self.embed_model = resolve_embed_model(embed_model)
+
+        self.embed_model.embed_batch_size = 4
+
+    def _load_service_context(self):
+        """
+        Loads the service context as self.service_context.
 
         Returns:
             ServiceContext: The service context
         """
+
         prompt_helper = PromptHelper(tokenizer=shared.tokenizer)
 
-        self.embed_model = resolve_embed_model(self.embed_model)
-
-        service_context = ServiceContext.\
+        self.service_context = ServiceContext.\
             from_defaults(llm=self.llm,
-                          embed_model=self.embed_model,
-                          prompt_helper=prompt_helper,
-                          chunk_size=1024,
-                          context_window=min(512, shared.args.n_ctx))
-
-        return service_context
+                        embed_model=self.embed_model,
+                        prompt_helper=prompt_helper,
+                        chunk_size=1024,
+                        context_window=shared.args.n_ctx)
 
     def read_documents(self):
         """
@@ -202,9 +163,9 @@ class IndexEngine():
         print("Reading documents...")
         for paths in tqdm(glob.glob("./examples/" + self.index_name + "/**/*.*", recursive=True)):
             # Skip the produced document and all unsupported files
-            if re.match(r".*\.((sql)|(json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(xlsx))", paths):
-                if re.match(r".*\.((json))", paths):
-                    to_be_processed.append(paths)
+            if re.match(r".*\.((sql)|([cj]?json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(xlsx))", paths):
+                if re.match(r".*\.(([cj]json))", paths):
+                    to_be_processed.append(str(paths))
                 continue
 
             documents += unstructured_loader.load_data(file=Path(paths))
@@ -212,10 +173,10 @@ class IndexEngine():
             # Creates a fake url pointing to the saved file
             documents[-1].metadata["url"] = paths
             documents[-1].metadata["title"] = paths.split("/")[-1]
-
+            
         reader = SimpleDirectoryReader(input_files=to_be_processed,
                                        encoding="utf_8",
-                                       file_extractor={".json": CustomReader()})
+                                       file_extractor={".jjson": JiraReader(), ".cjson": ConfluenceReader()})
         documents += reader.load_data()
 
         print("Size of all documents :", sum(list(map(lambda x: len(x.text), documents))))
@@ -257,15 +218,14 @@ class IndexEngine():
                                  Defaults to False.
         """
 
-        service_context = self.get_service_context()
-
         print("Indexing into a vector store...")
-        vector_store = connect_postgresql(self.index_name, service_context=service_context)
+        # vector_store = connect_elastic(self.index_name, service_context=self.service_context)
+        vector_store = connect_postgresql(self.index_name, service_context=self.service_context)
         vector_store.build_index_from_nodes(nodes=nodes)
 
         if kg:
             print("Indexing into a knowledge graph...")
-            kg_store = connect_nebulagraph(service_context=service_context)
+            kg_store = connect_nebulagraph(service_context=self.service_context)
             kg_store.build_index_from_nodes(nodes=nodes)
 
     def get_retrievers(self, kg=True):
@@ -282,9 +242,8 @@ class IndexEngine():
 
         print("Indexing documents...")
 
-        service_context = self.get_service_context()
-
-        vector_index = connect_postgresql(self.index_name, service_context=service_context)
+        # vector_index = connect_elastic(self.index_name, service_context=self.service_context)
+        vector_index = connect_postgresql(self.index_name, service_context=self.service_context)
 
         vec_retriever = vector_index.as_retriever(
             similarity_top_k=3,
@@ -294,7 +253,7 @@ class IndexEngine():
         kg_retriever = None
         if kg:
             # Graph store params
-            graph_store = connect_nebulagraph(service_context=service_context)
+            graph_store = connect_nebulagraph(service_context=self.service_context)
 
             kg_retriever = graph_store.as_retriever()
 
@@ -314,9 +273,6 @@ class IndexEngine():
 
         Raises:
             FileNotFoundError: If the dataset is not found and nodes is None
-
-        Returns:
-            EmbeddingModel: The embedding model
         """
 
         # TODO: Remove hardcoded "cuda:0" as the device in resolve_embed_model
@@ -358,33 +314,15 @@ class IndexEngine():
 
         finetune_engine.finetune()
 
-        return finetune_engine.get_finetuned_model(adapter_cls=TwoLayerNN, device="cuda:0")
+        self.embed_model = finetune_engine.get_finetuned_model(adapter_cls=TwoLayerNN, device="cuda:0")
 
-    def custom_retriever(self, embed_model: str):
-        """
-        Loads a custom retriever if the embed_model name is
-        of the form "custom:embed_model_name".
-
-        Args:
-            embed_model (str): The name of the embedding model
-        """
-        if embed_model.startswith("custom:"):
-            self.embed_model = AdapterEmbeddingModel(
-                resolve_embed_model(self.embed_model),
-                embed_model[7:],
-                device="cuda:0",
-                adapter_cls=TwoLayerNN
-            )
-
-    def as_retriever(self, embed_model="local:BAAI/bge-large-en-v1.5",
+    def as_retriever(self,
                      kg=False, fine_tune=False,
                      build_index=False):
         """
         Creates the retriever for the index.
 
         Args:
-            embed_model (str, optional): Embedding Model to be used.
-                                         Defaults to "local:BAAI/bge-large-en-v1.5".
             kg (bool, optional): Wether to include a graph store.
                                  Defaults to False.
             fine_tune (bool, optional): Wether to create / use a fined-tuned model.
@@ -396,10 +334,6 @@ class IndexEngine():
         Returns:
             BaseRetriever: The retriever
         """
-        if embed_model.startswith("custom:") and fine_tune:
-            raise ValueError("Cannot fine tune a custom model.")
-
-        self.custom_retriever(embed_model)
 
         print("Loading engine...")
         if build_index:
@@ -409,8 +343,7 @@ class IndexEngine():
             nodes = None
 
         if fine_tune:
-            self.embed_model = self.fine_tune(nodes=nodes,
-                                              out_path="models/embedder/" + self.index_name)
+            self.fine_tune(nodes=nodes, out_path="models/embedder/" + self.index_name)
 
         vec_retriever, kg_retriever = self.get_retrievers(kg=kg)
 

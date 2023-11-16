@@ -15,15 +15,28 @@ import wandb
 from wandb.sdk.data_types.trace_tree import Trace
 
 from modules import shared
+from modules.chat import get_turn_substrings
 from modules.text_generation import (
     generate_reply_HF,
-    generate_reply_custom
+    generate_reply_custom,
+    get_max_prompt_length
 )
 from modules.logging_colors import logger
 
 from extensions.llamaindex.llama_index_extension import IndexEngine
 
-DATASET = "conf_custo_embed"
+DATASET = "f_embed_raw"
+
+HISTORY_TREE_SUMMARIZE_TMPL = (
+    "\nChat history is above.\n"
+    "Context information from multiple sources is below.\n"
+    "---------------------\n"
+    "{context_str}\n"
+    "---------------------\n"
+    "Given the information from multiple sources and chat history but not prior knowledge, "
+    "answer the query.\n"
+    "Query: {query_str}\n"
+)
 
 
 def setup():
@@ -34,12 +47,12 @@ def setup():
     if shared.index is not None:
         print("Index already loaded!")
 
-    wandb.init(project="Haulogy-First-Test")
+    #TODO: Change when go to production
+    #wandb.init(project="Haulogy-First-Test")
 
     shared.index = IndexEngine(index_name=DATASET).as_retriever(kg=False,
-                                            fine_tune=True,
+                                            fine_tune=False,
                                             build_index=False)
-
 
 
 def get_meta_if_possible(nodes: List[NodeWithScore]) -> str:
@@ -56,9 +69,15 @@ def get_meta_if_possible(nodes: List[NodeWithScore]) -> str:
 
     for node in nodes:
         if node.metadata is not None:
+            # For confluence reader
             if ("url" in node.metadata.keys()
                     and "title" in node.metadata.keys()):
-                info += '[' + node.metadata['title'] + '](' + node.metadata['url'] + ')'
+                info += 'JIRA: [' + node.metadata['title'] + '](' + node.metadata['url'] + ')'
+
+            # For jira reader
+            if ("key" in node.metadata.keys()
+                    and "summary" in node.metadata.keys()):
+                info += 'Confluence: [' + node.metadata['summary'] + '](' + node.metadata['key'] + ')'
         else:
             # put a small extract instead
             info += 'No metadata found'
@@ -87,18 +106,24 @@ def input_modifier(question: str, state: dict, is_chat: bool = False) -> str:
     """
 
     state['last_question'] = question
+    
+    print("Question: \n", question)
 
     with torch.no_grad():
         resp = shared.index.retrieve(question)
 
-        context = "\n\n".join([x.get_content(metadata_mode=MetadataMode.NONE)
-                                for x in resp])
+    context = "\n\n".join([x.get_content(metadata_mode=MetadataMode.NONE)
+                            for x in resp])
 
-        state['last_metadata'] = get_meta_if_possible(resp)
+    state['last_metadata'] = get_meta_if_possible(resp)
 
-        question = DEFAULT_TREE_SUMMARIZE_PROMPT.format(context_str=context,
-                                                        query_str=question)
+    history = get_turn_substrings(state)
+    history = "\n".join(history)
 
+    question = HISTORY_TREE_SUMMARIZE_TMPL.format(context_str=context,
+                                                    query_str=question)     
+
+    print("Question length: ", len(question))
     return question
 
 
