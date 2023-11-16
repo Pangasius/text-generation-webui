@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import traceback
@@ -30,6 +31,8 @@ from .typing import (
     CompletionResponse,
     DecodeRequest,
     DecodeResponse,
+    EmbeddingsRequest,
+    EmbeddingsResponse,
     EncodeRequest,
     EncodeResponse,
     LoadModelRequest,
@@ -40,10 +43,13 @@ from .typing import (
 
 params = {
     'embedding_device': 'cpu',
-    'embedding_model': 'all-mpnet-base-v2',
+    'embedding_model': 'sentence-transformers/all-mpnet-base-v2',
     'sd_webui_url': '',
     'debug': 0
 }
+
+
+streaming_semaphore = asyncio.Semaphore(1)
 
 
 def verify_api_key(authorization: str = Header(None)) -> None:
@@ -84,9 +90,14 @@ async def openai_completions(request: Request, request_data: CompletionRequest):
 
     if request_data.stream:
         async def generator():
-            response = OAIcompletions.stream_completions(to_dict(request_data), is_legacy=is_legacy)
-            for resp in response:
-                yield {"data": json.dumps(resp)}
+            async with streaming_semaphore:
+                response = OAIcompletions.stream_completions(to_dict(request_data), is_legacy=is_legacy)
+                for resp in response:
+                    disconnected = await request.is_disconnected()
+                    if disconnected:
+                        break
+
+                    yield {"data": json.dumps(resp)}
 
         return EventSourceResponse(generator())  # SSE streaming
 
@@ -102,9 +113,14 @@ async def openai_chat_completions(request: Request, request_data: ChatCompletion
 
     if request_data.stream:
         async def generator():
-            response = OAIcompletions.stream_chat_completions(to_dict(request_data), is_legacy=is_legacy)
-            for resp in response:
-                yield {"data": json.dumps(resp)}
+            async with streaming_semaphore:
+                response = OAIcompletions.stream_chat_completions(to_dict(request_data), is_legacy=is_legacy)
+                for resp in response:
+                    disconnected = await request.is_disconnected()
+                    if disconnected:
+                        break
+
+                    yield {"data": json.dumps(resp)}
 
         return EventSourceResponse(generator())  # SSE streaming
 
@@ -182,19 +198,16 @@ async def handle_image_generation(request: Request):
     return JSONResponse(response)
 
 
-@app.post("/v1/embeddings")
-async def handle_embeddings(request: Request):
-    body = await request.json()
-    encoding_format = body.get("encoding_format", "")
-
-    input = body.get('input', body.get('text', ''))
+@app.post("/v1/embeddings", response_model=EmbeddingsResponse)
+async def handle_embeddings(request: Request, request_data: EmbeddingsRequest):
+    input = request_data.input
     if not input:
         raise HTTPException(status_code=400, detail="Missing required argument input")
 
     if type(input) is str:
         input = [input]
 
-    response = OAIembeddings.embeddings(input, encoding_format)
+    response = OAIembeddings.embeddings(input, request_data.encoding_format)
     return JSONResponse(response)
 
 
@@ -281,14 +294,14 @@ def run_server():
 
     if shared.args.public_api:
         def on_start(public_url: str):
-            logger.info(f'OpenAI compatible API URL:\n\n{public_url}/v1\n')
+            logger.info(f'OpenAI compatible API URL:\n\n{public_url}\n')
 
         _start_cloudflared(port, shared.args.public_api_id, max_attempts=3, on_start=on_start)
     else:
         if ssl_keyfile and ssl_certfile:
-            logger.info(f'OpenAI compatible API URL:\n\nhttps://{server_addr}:{port}/v1\n')
+            logger.info(f'OpenAI compatible API URL:\n\nhttps://{server_addr}:{port}\n')
         else:
-            logger.info(f'OpenAI compatible API URL:\n\nhttp://{server_addr}:{port}/v1\n')
+            logger.info(f'OpenAI compatible API URL:\n\nhttp://{server_addr}:{port}\n')
 
     if shared.args.api_key:
         logger.info(f'OpenAI API key:\n\n{shared.args.api_key}\n')

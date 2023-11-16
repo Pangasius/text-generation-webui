@@ -1,9 +1,10 @@
 import os
 import yaml
+import warnings
+
 import json
 import sys
 import time
-import warnings
 from functools import partial
 from pathlib import Path
 from threading import Lock
@@ -45,8 +46,10 @@ os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
 os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
 warnings.filterwarnings('ignore', category=UserWarning, message='Using the update method is deprecated')
+warnings.filterwarnings('ignore', category=UserWarning, message='Field "model_name" has conflict')
 
 matplotlib.use('Agg')  # This fixes LaTeX rendering on some systems
+
 
 def create_interface():
 
