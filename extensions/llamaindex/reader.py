@@ -84,17 +84,40 @@ class JiraReader(BaseReader):
         # id, key, project, date, type, summary, resolution, status
         metadata = {}
 
-        for key in ["id", "key", "date", "type",
-                    "summary", "resolution", "status", "versions"]:
-            if key == "summary":
-                metadata[key] = j[key][:250]
-            else:
-                metadata[key] = j[key]
+        for key in ("id", "key", "date", "type", "resolution", "status", "versions"):
+            metadata[key] = j[key]
 
-        content = {key: j[key] for key in ("id", "key", "summary", "project", "date",
-                    "summary", "description", "comments", "fixVersion")}
+        content = {}
+
+        for key in ("project", "summary", "description", "comments", "fixVersion"):
+            if key == "comments":
+                if j[key]:
+                    content[key] = "\n".join([comment["content"] for comment in j[key]])
+                else:
+                    content[key] = ""
+            else:
+                content[key] = j[key]
 
         doc = Document(text=json.dumps(content), metadata=metadata)
+
+        return [doc]
+
+
+class JiraReaderComments(BaseReader):
+    def load_data(self, *args: Any, **load_kwargs: Any) -> List[Document]:
+        # Extract the file path from the args
+        file = PosixPath(args[0])
+
+        if file.match("*project.jjson"):
+            return []
+
+        with open(file, "r", encoding="utf_8") as f:
+            text_dict = f.read()
+
+        j = json.loads(text_dict)
+
+        content = {key: j[key] for key in ("summary", "description", "comments")}
+        doc = Document(text=json.dumps(content))
 
         return [doc]
 

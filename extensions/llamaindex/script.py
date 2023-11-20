@@ -5,7 +5,7 @@ from typing import List
 
 import torch
 
-from llama_index.prompts.default_prompts import DEFAULT_TREE_SUMMARIZE_PROMPT
+
 from llama_index.schema import (
     MetadataMode,
     NodeWithScore
@@ -19,13 +19,13 @@ from modules.chat import get_turn_substrings
 from modules.text_generation import (
     generate_reply_HF,
     generate_reply_custom,
-    get_max_prompt_length
 )
 from modules.logging_colors import logger
 
 from extensions.llamaindex.llama_index_extension import IndexEngine
 
-DATASET = "f_embed_raw"
+DATASET = "f_embed_jira_raw"
+INDEX_NAME = "embed_jira_raw"
 
 HISTORY_TREE_SUMMARIZE_TMPL = (
     "\nChat history is above.\n"
@@ -47,10 +47,11 @@ def setup():
     if shared.index is not None:
         print("Index already loaded!")
 
+
     #TODO: Change when go to production
     #wandb.init(project="Haulogy-First-Test")
 
-    shared.index = IndexEngine(index_name=DATASET).as_retriever(kg=False,
+    shared.index = IndexEngine(index_name=INDEX_NAME, dataset=DATASET).as_retriever(kg=False,
                                             fine_tune=False,
                                             build_index=False)
 
@@ -72,12 +73,12 @@ def get_meta_if_possible(nodes: List[NodeWithScore]) -> str:
             # For confluence reader
             if ("url" in node.metadata.keys()
                     and "title" in node.metadata.keys()):
-                info += 'JIRA: [' + node.metadata['title'] + '](' + node.metadata['url'] + ')'
+                info += 'Confluence: [' + node.metadata['title'] + '](' + node.metadata['url'] + ')'
 
             # For jira reader
             if ("key" in node.metadata.keys()
                     and "summary" in node.metadata.keys()):
-                info += 'Confluence: [' + node.metadata['summary'] + '](' + node.metadata['key'] + ')'
+                info += 'Jira: [' + node.metadata['summary'] + '](' + node.metadata['key'] + ')'
         else:
             # put a small extract instead
             info += 'No metadata found'
@@ -106,7 +107,7 @@ def input_modifier(question: str, state: dict, is_chat: bool = False) -> str:
     """
 
     state['last_question'] = question
-    
+
     print("Question: \n", question)
 
     with torch.no_grad():
@@ -121,7 +122,7 @@ def input_modifier(question: str, state: dict, is_chat: bool = False) -> str:
     history = "\n".join(history)
 
     question = HISTORY_TREE_SUMMARIZE_TMPL.format(context_str=context,
-                                                    query_str=question)     
+                                                    query_str=question)
 
     print("Question length: ", len(question))
     return question
@@ -200,6 +201,8 @@ def custom_generate_reply(*args, **kwargs):
     question = args[0]
     state = args[3]
 
+    state["truncation_length"] = shared.args.n_ctx
+
     try:
         for ans in generate_func(*args, **kwargs):
             yield ans
@@ -218,4 +221,4 @@ def custom_generate_reply(*args, **kwargs):
                            "context": question}
         llm_span.end_time_ms = end_time_ms
         llm_span.outputs = {"response": ans}
-        #llm_span.log(name="HauBot-test-CEO")
+        llm_span.log(name="HauBot-test-Jira")

@@ -1,4 +1,5 @@
 """Module allowing to query and construct a LlamaIndex index."""
+import json
 from pathlib import Path
 import glob
 import os
@@ -16,7 +17,7 @@ from llama_index import (
     QueryBundle,
 )
 
-from llama_index.llms import HuggingFaceLLM, MockLLM
+from llama_index.llms import HuggingFaceLLM
 from llama_index.schema import NodeWithScore, BaseNode
 from llama_index.retrievers import (
     BaseRetriever,
@@ -34,11 +35,21 @@ from llama_index.finetuning.embeddings.common import (
     generate_qa_embedding_pairs,
     EmbeddingQAFinetuneDataset
 )
+from llama_index.extractors import (
+    SummaryExtractor,
+    QuestionsAnsweredExtractor,
+    TitleExtractor,
+    KeywordExtractor,
+    EntityExtractor
+)
+from llama_index.ingestion import IngestionPipeline
 
 from modules import shared
 
 from extensions.llamaindex.reader import ConfluenceReader, JiraReader
 from extensions.llamaindex.connections import connect_nebulagraph, connect_postgresql, connect_elastic
+
+from transformers import AutoConfig
 
 pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 
@@ -89,20 +100,38 @@ class IndexEngine():
     This class is used to index documents and retrieve them.
     It will interact with a vector store and can also interact with a knowledge graph.
     """
-    def __init__(self, index_name: str, embed_model="local:BAAI/bge-large-en-v1.5"):
+    def __init__(self, index_name: str, dataset: str = None, embed_model="local:BAAI/bge-large-en-v1.5"):
         print("Loading model...")
         self.retriever = None
 
+        path_to_model = Path(f'{shared.args.model_dir}/{shared.model_name}')
+        path_to_tokenizer = Path(f'{shared.args.model_dir}/{shared.model_name}' + "/tokenizer_config.json")
+
+        config = AutoConfig.from_pretrained(path_to_model)
+        tokenizer_config = json.load(open(path_to_tokenizer, "r"))
+
+        print("Config loaded : ", config)
+        print("Tokenizer config loaded : ", tokenizer_config)
+
         llm = HuggingFaceLLM(model=shared.model,
+                             model_name=shared.model_name,
                             tokenizer=shared.tokenizer,
+                            tokenizer_name=shared.model_name,
                             max_new_tokens=shared.settings['max_new_tokens'],
-                            context_window=shared.args.n_ctx)
+                            context_window=shared.args.n_ctx,
+                            model_kwargs=config.to_dict(),
+                            tokenizer_kwargs=tokenizer_config)
 
         print("Max new tokens:", shared.settings['max_new_tokens'])
         print("Context window:", shared.args.n_ctx)
 
         self.llm = llm
         self.index_name = index_name
+
+        if dataset is None:
+            self.dataset = index_name
+        else:
+            self.dataset = dataset
 
         self._load_embedding_model(embed_model)
 
@@ -161,7 +190,7 @@ class IndexEngine():
         documents = []
 
         print("Reading documents...")
-        for paths in tqdm(glob.glob("./examples/" + self.index_name + "/**/*.*", recursive=True)):
+        for paths in tqdm(glob.glob("./examples/" + self.dataset + "/**/*.*", recursive=True)):
             # Skip the produced document and all unsupported files
             if re.match(r".*\.((sql)|([cj]?json)|(xsd)|(css)|(xml)|(csv)|(png)|(jpg)|(xlsx))", paths):
                 if re.match(r".*\.(([cj]json))", paths):
@@ -173,7 +202,7 @@ class IndexEngine():
             # Creates a fake url pointing to the saved file
             documents[-1].metadata["url"] = paths
             documents[-1].metadata["title"] = paths.split("/")[-1]
-            
+
         reader = SimpleDirectoryReader(input_files=to_be_processed,
                                        encoding="utf_8",
                                        file_extractor={".jjson": JiraReader(), ".cjson": ConfluenceReader()})
@@ -181,7 +210,8 @@ class IndexEngine():
 
         print("Size of all documents :", sum(list(map(lambda x: len(x.text), documents))))
 
-        return documents
+        # TODO: remove limitation
+        return documents[:30]
 
     def parse_documents(self):
         """
@@ -197,8 +227,19 @@ class IndexEngine():
         node_parser = SimpleNodeParser.from_defaults(chunk_size=1024,
                                                      chunk_overlap=128)
 
-        print("Parsing documents into nodes...")
-        nodes = node_parser.get_nodes_from_documents(documents, show_progress=True)
+        extractors = [
+            TitleExtractor(nodes=5, llm=self.llm),
+            #QuestionsAnsweredExtractor(questions=3, llm=self.llm),
+            EntityExtractor(prediction_threshold=0.5, device="cuda:0"),
+            SummaryExtractor(summaries=["prev", "self"], llm=self.llm),
+            KeywordExtractor(keywords=10, llm=self.llm),
+        ]
+
+        transformations = [node_parser] + extractors
+
+        pipeline = IngestionPipeline(transformations=transformations)
+
+        nodes = pipeline.run(documents=documents, in_place=True, show_progress=True)
 
         # print the average size
         print("Average node size:", sum(list(map(lambda x: len(x.text), nodes))) / len(nodes))
