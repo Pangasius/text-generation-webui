@@ -234,13 +234,14 @@ if __name__ == "__main__":
 
     shared.generation_lock = Lock()
 
-    # Launch the web UI
-    create_interface()
-
-    try:
-        if shared.args.no_launch:
-            print("No launch mode activated. Exiting...")
-            raise KeyboardInterrupt
+    if shared.args.nowebui:
+        # Start the API in standalone mode
+        shared.args.extensions = [x for x in shared.args.extensions if x != 'gallery']
+        if shared.args.extensions is not None and len(shared.args.extensions) > 0:
+            extensions_module.load_extensions()
+    else:
+        # Launch the web UI
+        create_interface()
         while True:
             time.sleep(0.5)
             if shared.need_restart:
@@ -249,6 +250,3 @@ if __name__ == "__main__":
                 shared.gradio['interface'].close()
                 time.sleep(0.5)
                 create_interface()
-    except KeyboardInterrupt:
-        print("Soft exit.")
-        shared.gradio['interface'].close()

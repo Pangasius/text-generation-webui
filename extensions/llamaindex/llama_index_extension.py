@@ -227,15 +227,15 @@ class IndexEngine():
         node_parser = SimpleNodeParser.from_defaults(chunk_size=1024,
                                                      chunk_overlap=128)
 
-        extractors = [
-            TitleExtractor(nodes=5, llm=self.llm),
-            #QuestionsAnsweredExtractor(questions=3, llm=self.llm),
-            EntityExtractor(prediction_threshold=0.5, device="cuda:0"),
-            SummaryExtractor(summaries=["prev", "self"], llm=self.llm),
-            KeywordExtractor(keywords=10, llm=self.llm),
-        ]
+        #extractors = [
+        #    TitleExtractor(nodes=5, llm=self.llm),
+        #   QuestionsAnsweredExtractor(questions=3, llm=self.llm),
+        #    EntityExtractor(prediction_threshold=0.5, device="cuda:0"),
+        #    SummaryExtractor(summaries=["prev", "self"], llm=self.llm),
+        #    KeywordExtractor(keywords=10, llm=self.llm),
+        #]
 
-        transformations = [node_parser] + extractors
+        transformations = [node_parser]  # + extractors
 
         pipeline = IngestionPipeline(transformations=transformations)
 

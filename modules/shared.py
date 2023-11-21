@@ -94,7 +94,7 @@ parser.add_argument('--xformers', action='store_true', help='Use xformer\'s memo
 parser.add_argument('--sdp-attention', action='store_true', help='Use PyTorch 2.0\'s SDP attention. Same as above.')
 parser.add_argument('--trust-remote-code', action='store_true', help='Set trust_remote_code=True while loading the model. Necessary for some models.')
 parser.add_argument('--force-safetensors', action='store_true', help='Set use_safetensors=True while loading the model. This prevents arbitrary code execution.')
-parser.add_argument('--use_fast', action='store_true', help='Set use_fast=True while loading the tokenizer.')
+parser.add_argument('--no_use_fast', action='store_true', help='Set use_fast=False while loading the tokenizer (it\'s True by default). Use this if you have any problems related to use_fast.')
 parser.add_argument('--use_flash_attention_2', action='store_true', help='Set use_flash_attention_2=True while loading the model.')
 
 # Accelerate 4-bit
@@ -113,7 +113,6 @@ parser.add_argument('--no-mmap', action='store_true', help='Prevent mmap from be
 parser.add_argument('--mlock', action='store_true', help='Force the system to keep the model in RAM.')
 parser.add_argument('--n-gpu-layers', type=int, default=0, help='Number of layers to offload to the GPU.')
 parser.add_argument('--tensor_split', type=str, default=None, help='Split the model across multiple GPUs. Comma-separated list of proportions. Example: 18,17.')
-parser.add_argument('--llama_cpp_seed', type=int, default=0, help='Seed for llama-cpp models. Default is 0 (random).')
 parser.add_argument('--numa', action='store_true', help='Activate NUMA task allocation for llama.cpp.')
 parser.add_argument('--logits_all', action='store_true', help='Needs to be set for perplexity evaluation to work. Otherwise, ignore it, as it makes prompt processing slower.')
 parser.add_argument('--cache-capacity', type=str, help='Maximum cache capacity (llama-cpp-python). Examples: 2000MiB, 2GiB. When provided without units, bytes will be assumed.')
@@ -175,6 +174,8 @@ parser.add_argument('--public-api', action='store_true', help='Create a public U
 parser.add_argument('--public-api-id', type=str, help='Tunnel ID for named Cloudflare Tunnel. Use together with public-api option.', default=None)
 parser.add_argument('--api-port', type=int, default=5000, help='The listening port for the API.')
 parser.add_argument('--api-key', type=str, default='', help='API authentication key.')
+parser.add_argument('--admin-key', type=str, default='', help='API authentication key for admin tasks like loading and unloading models. If not set, will be the same as --api-key.')
+parser.add_argument('--nowebui', action='store_true', help='Do not launch the Gradio UI. Useful for launching the API in standalone mode.')
 
 # Multimodal
 parser.add_argument('--multimodal-pipeline', type=str, default=None, help='The multimodal pipeline to use. Examples: llava-7b, llava-13b.')
@@ -186,11 +187,11 @@ parser.add_argument('--no-stream', action='store_true', help='DEPRECATED')
 parser.add_argument('--mul_mat_q', action='store_true', help='DEPRECATED')
 parser.add_argument('--api-blocking-port', type=int, default=5000, help='DEPRECATED')
 parser.add_argument('--api-streaming-port', type=int, default=5005, help='DEPRECATED')
+parser.add_argument('--llama_cpp_seed', type=int, default=0, help='DEPRECATED')
+parser.add_argument('--use_fast', action='store_true', help='DEPRECATED')
 
 # Lora training
 parser.add_argument('--lora-train', action='store_true', help='Train a LoRA.')
-
-parser.add_argument('--no_launch', action='store_true', help='Do not launch the web UI.')
 
 args = parser.parse_args()
 args_defaults = parser.parse_args([])
@@ -201,14 +202,14 @@ for arg in sys.argv[1:]:
         provided_arguments.append(arg)
 
 # Deprecation warnings
-for k in ['chat', 'notebook', 'no_stream', 'mul_mat_q']:
+for k in ['notebook', 'chat', 'no_stream', 'mul_mat_q', 'use_fast']:
     if getattr(args, k):
         logger.warning(f'The --{k} flag has been deprecated and will be removed soon. Please remove that flag.')
 
 # Security warnings
 if args.trust_remote_code:
     logger.warning('trust_remote_code is enabled. This is dangerous.')
-if 'COLAB_GPU' not in os.environ:
+if 'COLAB_GPU' not in os.environ and not args.nowebui:
     if args.share:
         logger.warning("The gradio \"share link\" feature uses a proprietary executable to create a reverse tunnel. Use it with care.")
     if any((args.listen, args.share)) and not any((args.gradio_auth, args.gradio_auth_path)):

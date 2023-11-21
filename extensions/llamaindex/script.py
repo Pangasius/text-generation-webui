@@ -25,7 +25,7 @@ from modules.logging_colors import logger
 from extensions.llamaindex.llama_index_extension import IndexEngine
 
 DATASET = "f_embed_jira_raw"
-INDEX_NAME = "embed_jira_raw"
+INDEX_NAME = "f_embed_jira_raw"
 
 HISTORY_TREE_SUMMARIZE_TMPL = (
     "\nChat history is above.\n"
@@ -49,7 +49,7 @@ def setup():
 
 
     #TODO: Change when go to production
-    #wandb.init(project="Haulogy-First-Test")
+    wandb.init(project="Haulogy-First-Test")
 
     shared.index = IndexEngine(index_name=INDEX_NAME, dataset=DATASET).as_retriever(kg=False,
                                             fine_tune=False,
