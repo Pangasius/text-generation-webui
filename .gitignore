@@ -51,3 +51,5 @@ wandb/
 
 
 .pylintrc
+
+details.json

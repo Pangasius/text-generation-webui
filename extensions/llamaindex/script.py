@@ -11,6 +11,8 @@ from llama_index.schema import (
     NodeWithScore
 )
 
+import nest_asyncio
+
 import wandb
 from wandb.sdk.data_types.trace_tree import Trace
 
@@ -46,6 +48,8 @@ def setup():
     """
     if shared.index is not None:
         print("Index already loaded!")
+        
+    nest_asyncio.apply()
 
 
     #TODO: Change when go to production
