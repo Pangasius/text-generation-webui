@@ -11,19 +11,23 @@ import regex as re
 from extensions.llamaindex.llama_index_extension import BaseRetriever
 from extensions.llamaindex.tools.JiraTool import JiraToolSpec
 
-STAGES_DESCRIPTION = [
-    "Query Jira for issues",
-    "Detail an issue",
-    "Confluence search",
-    "Final answer"
-]
-
 
 @dataclass
 class LlamaIndexVars():
     index: BaseRetriever
     jira_tool: JiraToolSpec
     generate_func: Callable[[str, str, int, dict, List[str]], Generator]
+
+
+def annotate_response(response, title, header_size=3, sep_line=False) -> str:
+    """
+    Wraps the response in a markdown block-quote and adds
+    the title with a Header of size header-size.
+    """
+    header = "#" * header_size
+    separator = "\n---\n" if sep_line else "\n"
+
+    return f"{header} {title}\n> {response}{separator}"
 
 
 def get_meta_if_possible(nodes: List[NodeWithScore]) -> str:
@@ -39,6 +43,8 @@ def get_meta_if_possible(nodes: List[NodeWithScore]) -> str:
     info = ""
 
     for node in nodes:
+        info += ">"
+
         if node.metadata is not None:
             # For confluence reader
             if ("url" in node.metadata.keys()
@@ -148,6 +154,9 @@ def tool_parse(response: str, function) -> str:
     if arguments.__contains__("="):
         arguments[0] = arguments[0].split("=")[1]
 
+    if arguments.__contains__(":"):
+        arguments[0] = arguments[0].split(":")[1]
+
     # Remove the quotes if necessary
 
     arguments[0] = arguments[0].replace("'", "")
@@ -185,6 +194,8 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
     It will call all the functions above in order.
     """
 
+    all_responses = []
+
     ans = ""
     gen = llama_index_vars.generate_func
 
@@ -196,6 +207,7 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
     for ans in response:
         yield ans
     response = ans
+    all_responses.append(annotate_response(response, "Jira Query"))
 
     # Parse the response and call the tool
     issues = tool_parse(response, query_function)
@@ -206,8 +218,10 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
 
     # Unroll the generator
     for ans in response:
-        yield ans
+        yield "\n".join(all_responses) + "\n" + ans
     response = ans
+    state["jira_metadata"] = "Issue queried:\n> " + ans + "\nCandidate issues:\n> " + issues.replace("\n", "\n>") + "\n"
+    all_responses.append(annotate_response(response, "Jira Detail"))
 
     # Parse the response and call the tool
     context = tool_parse(response, query_function_detail)
@@ -215,23 +229,26 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
     # Chunkify the context using a rolling window of 4096 characters
     # Do this until the result fits in 4096 characters
     last_pass = False
+    length_skip = 10000
     while not last_pass:
-        if len(context) <= 4096:
+        if len(context) <= length_skip:
             last_pass = True
 
         answers = []
-        for start in range(0, len(context), 4096):
-            end = min(start + 4096, len(context))
+        for start in range(0, len(context), length_skip):
+            end = min(start + length_skip, len(context))
             response = chunk_detail(context, question, seed, state, stopping_strings, start, end, gen)
 
             # Unroll the generator
             for ans in response:
-                yield ans
+                yield "\n".join(all_responses) + "\n" + ans
             answers.append(ans)
+            all_responses.append(annotate_response(ans, "Jira Chunk"))
         context = "\n".join(answers)
+        all_responses = all_responses[:-len(answers)]
 
     # Return the final context, which is supposed to be the final summary
-    yield context
+    yield "\n".join(all_responses) + "\n" + annotate_response(context, "Jira Summary")
 
 
 def query_confluence_index(question: str, seed: int, state: dict, stopping_strings: List[str], llama_index_vars: LlamaIndexVars):
@@ -296,6 +313,7 @@ def conf_jira_pipeline(question: str, seed: int, state: dict, stopping_strings: 
     """
 
     ans = ""
+    all_responses = []
 
     # Use the jira pipeline to get the first response
     response = jira_pipeline(question, seed, state, stopping_strings, llama_index_vars)
@@ -303,6 +321,7 @@ def conf_jira_pipeline(question: str, seed: int, state: dict, stopping_strings: 
     # Unroll the generator
     for ans in response:
         yield ans
+    all_responses.append(annotate_response(ans, "Jira Pipeline", header_size=2, sep_line=True))
 
     first_response = ans
 
@@ -311,7 +330,8 @@ def conf_jira_pipeline(question: str, seed: int, state: dict, stopping_strings: 
 
     # Unroll the generator
     for ans in response:
-        yield ans
+        yield "\n".join(all_responses) + "\n" + ans
+    all_responses.append(annotate_response(ans, "Confluence search Tool", header_size=2, sep_line=True))
 
     second_response = ans
 
@@ -320,4 +340,4 @@ def conf_jira_pipeline(question: str, seed: int, state: dict, stopping_strings: 
 
     # Unroll the generator
     for ans in response:
-        yield ans
+        yield "\n".join(all_responses) + "\n" + annotate_response(ans, "Final answer", header_size=1)

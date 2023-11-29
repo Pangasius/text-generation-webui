@@ -111,6 +111,8 @@ class JiraToolSpec(BaseTool):
             summary = issue["fields"]["summary"]
             summaries += issue["key"] + ": " + summary[:100] + ("...\n" if len(summary) > 100 else "\n")
 
+        print(summaries)
+
         return summaries
 
     def detail_issue(self, issue_requested: str):
@@ -159,5 +161,7 @@ class JiraToolSpec(BaseTool):
 
         # Clear the last results
         self.last_results = None
+
+        print(result)
 
         return result

@@ -20,7 +20,7 @@ from modules.text_generation import (
 
 from extensions.llamaindex.llama_index_extension import IndexEngine
 
-from extensions.llamaindex.stages.stages import LlamaIndexVars, conf_jira_pipeline, STAGES_DESCRIPTION
+from extensions.llamaindex.stages.stages import LlamaIndexVars, conf_jira_pipeline
 
 global LLAMA_INDEX_VARS
 LLAMA_INDEX_VARS = None
@@ -85,38 +85,6 @@ def output_modifier(output: str, state: dict, is_chat=False):
         output = output + state["jira_metadata"]
 
     return output
-
-
-def annotate_text(question: str, answers: List[str], annotations: List[int]) -> str:
-    """
-    This function annotates the different answers given their stages.
-    """
-
-    question_template = (
-        "### Question\n"
-        "---\n"
-        "{question}\n"
-        "---\n"
-    )
-
-    template = (
-        "### Stage {stage_number} : {description}\n"
-        "---\n"
-        "{answer}\n"
-        "---\n"
-    )
-
-    full_text = ""
-
-    for i in range(len(answers)):
-        if i == len(answers) - 1:
-            full_text += question_template.format(question=question)
-
-        full_text += template.format(stage_number=annotations[i], answer=answers[i], description=STAGES_DESCRIPTION[annotations[i] - 1])
-
-    # wandb.log({"annotated_text": wandb.Html(full_text)})
-
-    return full_text
 
 
 def get_generate_func():
