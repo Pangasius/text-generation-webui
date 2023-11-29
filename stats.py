@@ -14,7 +14,7 @@ from tqdm import tqdm
 from llama_index import SimpleDirectoryReader
 from llama_index.node_parser import SimpleNodeParser
 
-from extensions.llamaindex.reader import JiraReaderComments
+from extensions.llamaindex.tools.reader import JiraReaderComments
 
 CANDIDATE_LABELS = ["informative", "uninformative"]
 

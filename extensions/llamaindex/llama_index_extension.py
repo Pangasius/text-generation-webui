@@ -42,12 +42,13 @@ from llama_index.extractors import (
     KeywordExtractor,
     EntityExtractor
 )
+
 from llama_index.ingestion import IngestionPipeline
 
 from modules import shared
 
-from extensions.llamaindex.reader import ConfluenceReader, JiraReader
-from extensions.llamaindex.connections import connect_nebulagraph, connect_postgresql, connect_elastic
+from extensions.llamaindex.tools.reader import ConfluenceReader, JiraReader
+from extensions.llamaindex.tools.connections import connect_nebulagraph, connect_postgresql, connect_elastic
 
 from transformers import AutoConfig
 
@@ -102,7 +103,6 @@ class IndexEngine():
     """
     def __init__(self, index_name: str, dataset: str = None, embed_model="local:BAAI/bge-large-en-v1.5"):
         print("Loading model...")
-        self.retriever = None
 
         path_to_model = Path(f'{shared.args.model_dir}/{shared.model_name}')
         path_to_tokenizer = Path(f'{shared.args.model_dir}/{shared.model_name}' + "/tokenizer_config.json")
@@ -227,15 +227,15 @@ class IndexEngine():
         node_parser = SimpleNodeParser.from_defaults(chunk_size=1024,
                                                      chunk_overlap=128)
 
-        #extractors = [
+        extractors = [
         #    TitleExtractor(nodes=5, llm=self.llm),
         #   QuestionsAnsweredExtractor(questions=3, llm=self.llm),
-        #    EntityExtractor(prediction_threshold=0.5, device="cuda:0"),
+            EntityExtractor(prediction_threshold=0.5, device="cuda:0"),
         #    SummaryExtractor(summaries=["prev", "self"], llm=self.llm),
         #    KeywordExtractor(keywords=10, llm=self.llm),
-        #]
+        ]
 
-        transformations = [node_parser]  # + extractors
+        transformations = [node_parser] + extractors
 
         pipeline = IngestionPipeline(transformations=transformations)
 
@@ -262,6 +262,7 @@ class IndexEngine():
         print("Indexing into a vector store...")
         # vector_store = connect_elastic(self.index_name, service_context=self.service_context)
         vector_store = connect_postgresql(self.index_name, service_context=self.service_context)
+
         vector_store.build_index_from_nodes(nodes=nodes)
 
         if kg:
@@ -388,10 +389,10 @@ class IndexEngine():
 
         vec_retriever, kg_retriever = self.get_retrievers(kg=kg)
 
-        self.retriever = vec_retriever
+        retriever = vec_retriever
 
         if kg_retriever is not None:
-            self.retriever = CustomRetriever(vec_retriever, kg_retriever)
+            retriever = CustomRetriever(vec_retriever, kg_retriever)
 
         print("Engine loaded")
-        return self.retriever
+        return retriever

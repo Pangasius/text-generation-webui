@@ -11,7 +11,6 @@ from modules.logging_colors import logger
 # Model variables
 model = None
 tokenizer = None
-index = None
 model_name = 'None'
 is_seq2seq = False
 model_dirty_from_training = False

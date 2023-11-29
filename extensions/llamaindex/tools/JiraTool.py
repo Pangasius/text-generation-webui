@@ -3,20 +3,25 @@
 from typing import Dict, Optional
 from attr import dataclass
 from llama_index.tools import BaseTool
+import regex
 import requests
 import json
 
-URL_BASE = "https://jira.haulogy.net/jira/rest/api/2/search/"
+URL_BASE = "https://jira.haulogy.net/jira/rest/api/2/search"
+
+HEADERS = {
+    "Accept": "application/json"
+}
 
 
 @dataclass
 class JiraQuery:
     """This class represents a query to Jira"""
     jql: str
-    startsAt: int = 0
-    maxResults: int = 10
+    startAt: int = 0
+    maxResults: int = 3
     validateQuery: bool = True
-    fields: str = "summary,description,issuetype,project,creator,reporter,created,updated,status,labels,attachment,comment"
+    fields: list[str] = ["summary", "description", "comment"]
     expand: str = ""
 
     @staticmethod
@@ -33,6 +38,7 @@ class JiraQuery:
             if i < len(keyword) - 1:
                 query += " OR text ~ "
         query += " AND status in (\"Closed\", \"Done\")"
+        query += " AND created > \"2018-01-01\""
         query += " ORDER BY created DESC"
 
         return JiraQuery(jql=query)
@@ -40,6 +46,8 @@ class JiraQuery:
 
 class JiraToolSpec(BaseTool):
 
+    name = "JiraTool"
+    description = "This tool is used to dynamically load Jira issues when they are requested"
     spec_functions = ["jira_query", "detail_issue"]
 
     def __init__(self, app_id: Optional[str] = None) -> None:
@@ -56,7 +64,7 @@ class JiraToolSpec(BaseTool):
         r_auth = requests.post('https://jira.haulogy.net/jira/rest/auth/1/session', json=self.login_data)
         if r_auth.status_code != 200:
             print("Login failed with status code " + str(r_auth.status_code) + ".")
-            exit(1)
+            raise Exception("Login failed.")
         else:
             print("Login successful.")
         r_auth = r_auth.json()["session"]
@@ -69,8 +77,8 @@ class JiraToolSpec(BaseTool):
         Make a query to Jira which contains diverse Haulogy information. Returns a list of issues to investigate.
 
         Example inputs:
-        - \"rectification billing\"
-        - \"haugazel, invoice\"
+        - rectification billing
+        - haugazel, invoice
 
         Args:
             query (str): a comma separated list of keywords
@@ -84,47 +92,61 @@ class JiraToolSpec(BaseTool):
         jira_query = JiraQuery.default_keyword_query(keywords, self.categories)
 
         # Make query
-        r = requests.post(URL_BASE, json=jira_query.__dict__, cookies=cookies)
-        if r.status_code != 200:
-            print("Query failed with status code " + str(r.status_code) + ".")
-            exit(1)
+        response = requests.request("GET", URL_BASE, headers=HEADERS, params=jira_query.__dict__, cookies=cookies)
+        if response.status_code != 200:
+            print("Query failed with status code " + str(response.status_code) + ".")
+            raise Exception("Query failed.")
         else:
             print("Query successful.")
 
         # Parse results
-        r = r.json()
+        r = response.json()
         issues = r["issues"]
 
         self.last_results = issues
 
         # Only print the 20 first characters of the summary
-        summary = ""
+        summaries = ""
         for issue in issues:
-            summary += issue["key"] + ": " + issue["fields"]["summary"][:20] + "\n"
+            summary = issue["fields"]["summary"]
+            summaries += issue["key"] + ": " + summary[:100] + ("...\n" if len(summary) > 100 else "\n")
 
-        return summary
+        return summaries
 
-    def detail_issue(self, issue: "str"):
+    def detail_issue(self, issue_requested: str):
         """
         Read the description and comments about a specific issue.
 
         Example inputs:
-        - \"HAUGAZEL-123\"
+        - HAUGAZEL-123
+        - 1
 
         Args:
-            issue (str): The issue key
+            issue (str): The issue key exactly or the cardinal number indicating the position in the last results from the top = 0.
         """
         if self.last_results is None:
             return "Make a query before detailing its issues."
 
         # Get the description and comments
-        description = ""
-        comments = ""
-        for issue in self.last_results:
-            if issue["key"] == issue:
-                description = issue["fields"]["description"]
-                comments = issue["fields"]["comment"]["comments"]
-                break
+
+        if regex.match(r"^\d+$", issue_requested):
+            issue_requested = int(issue_requested)
+            if issue_requested < len(self.last_results):
+                description = self.last_results[issue_requested]["fields"]["description"]
+                comments = self.last_results[issue_requested]["fields"]["comment"]["comments"]
+            else:
+                return "The issue requested must be a string or an integer."
+
+        elif isinstance(issue_requested, str):
+            description = ""
+            comments = ""
+            for issue in self.last_results:
+                if issue["key"] == issue_requested:
+                    description = issue["fields"]["description"]
+                    comments = issue["fields"]["comment"]["comments"]
+                    break
+        else:
+            return "The issue requested must be a string or an integer."
 
         if description == "":
             return "Issue not found."
