@@ -2,10 +2,10 @@
 
 from typing import Dict, Optional
 from attr import dataclass
-from llama_index.tools import BaseTool
-import regex
 import requests
 import json
+
+from llama_index.tools import BaseTool
 
 URL_BASE = "https://jira.haulogy.net/jira/rest/api/2/search"
 
@@ -19,7 +19,7 @@ class JiraQuery:
     """This class represents a query to Jira"""
     jql: str
     startAt: int = 0
-    maxResults: int = 3
+    maxResults: int = 4
     validateQuery: bool = True
     fields: list[str] = ["summary", "description", "comment"]
     expand: str = ""
@@ -45,6 +45,13 @@ class JiraQuery:
 
 
 class JiraToolSpec(BaseTool):
+    """
+    This class contains different functions to interact with Jira.
+
+    Each of them returns a string.
+    If an error occurs, the string starts with "FAILED: " and the error message follows.
+    If the error is unrecoverable, an exception is raised instead.
+    """
 
     name = "JiraTool"
     description = "This tool is used to dynamically load Jira issues when they are requested"
@@ -57,16 +64,18 @@ class JiraToolSpec(BaseTool):
         self.categories = config["categories"]
         self.login_data = config["login_data"]
         self.last_results = None
+        self.last_details = None
+        self.last_summary = None
+        self.cookies = self._get_cookies()
 
-    def get_cookies(self) -> Dict[str, str]:
+    def _get_cookies(self) -> Dict[str, str]:
         """Opens a session with Jira and returns the cookies"""
-        print("Logging in Jira ...")
+
         r_auth = requests.post('https://jira.haulogy.net/jira/rest/auth/1/session', json=self.login_data)
+
         if r_auth.status_code != 200:
-            print("Login failed with status code " + str(r_auth.status_code) + ".")
-            raise Exception("Login failed.")
-        else:
-            print("Login successful.")
+            raise Exception("Login failed with status code " + str(r_auth.status_code) + ".")
+
         r_auth = r_auth.json()["session"]
         cookies = {'JSESSIONID': r_auth["value"]}
 
@@ -84,62 +93,48 @@ class JiraToolSpec(BaseTool):
             query (str): a comma separated list of keywords
         """
 
-        # Connect and get cookies
-        cookies = self.get_cookies()
-
         # Parse query
         keywords = query.split(",")
         jira_query = JiraQuery.default_keyword_query(keywords, self.categories)
 
         # Make query
-        response = requests.request("GET", URL_BASE, headers=HEADERS, params=jira_query.__dict__, cookies=cookies)
+        response = requests.request("GET", URL_BASE, headers=HEADERS, params=jira_query.__dict__, cookies=self.cookies)
         if response.status_code != 200:
-            print("Query failed with status code " + str(response.status_code) + ".")
-            raise Exception("Query failed.")
-        else:
-            print("Query successful.")
+            raise Exception("Query failed with status code " + str(response.status_code) + ".")
 
         # Parse results
-        r = response.json()
-        issues = r["issues"]
+        self.last_results = response.json()["issues"]
 
-        self.last_results = issues
+        if len(self.last_results) == 0:
+            return "FAILED: No issue found."
 
         # Only print the 20 first characters of the summary
-        summaries = ""
-        for issue in issues:
+        self.last_summary = ""
+        for issue in self.last_results:
             summary = issue["fields"]["summary"]
-            summaries += issue["key"] + ": " + summary[:100] + ("...\n" if len(summary) > 100 else "\n")
+            self.last_summary += issue["key"] + ": " + summary + "\n"
 
-        print(summaries)
+        # Here we have to print or the variable is not saved
+        print(self.last_summary)
 
-        return summaries
+        return self.last_summary
 
     def detail_issue(self, issue_requested: str):
         """
-        Read the description and comments about a specific issue.
+        Reads the description and comments about a specific issue.
 
         Example inputs:
         - HAUGAZEL-123
-        - 1
 
         Args:
-            issue (str): The issue key exactly or the cardinal number indicating the position in the last results from the top = 0.
+            issue (str): The issue key exactly.
         """
         if self.last_results is None:
-            return "Make a query before detailing its issues."
+            return "FAILED: No query has been made yet, please use jira_query(keywords)."
 
         # Get the description and comments
 
-        if regex.match(r"^\d+$", issue_requested):
-            issue_requested = int(issue_requested)
-            if issue_requested < len(self.last_results):
-                description = self.last_results[issue_requested]["fields"]["description"]
-                comments = self.last_results[issue_requested]["fields"]["comment"]["comments"]
-            else:
-                return "The issue requested must be a string or an integer."
-
-        elif isinstance(issue_requested, str):
+        if isinstance(issue_requested, str):
             description = ""
             comments = ""
             for issue in self.last_results:
@@ -148,20 +143,18 @@ class JiraToolSpec(BaseTool):
                     comments = issue["fields"]["comment"]["comments"]
                     break
         else:
-            return "The issue requested must be a string or an integer."
+            return f"FAILED: The issue requested must be a string, not {type(issue_requested)}"
 
         if description == "":
-            return "Issue not found."
+            return f"FAILED: Issue {issue_requested} not found. Available issues are: {', '.join([issue['key'] for issue in self.last_results])}"
 
         # Format the result
-        result = "Description: " + description + "\n"
-        result += "Comments:\n"
+        self.last_results = "Description: " + description + "\n"
+        self.last_results += "Comments:\n"
         for comment in comments:
-            result += comment["body"] + "\n"
+            self.last_results += comment["body"] + "\n"
 
-        # Clear the last results
-        self.last_results = None
+        # Here we have to print or the variable is not saved
+        print(self.last_results)
 
-        print(result)
-
-        return result
+        return self.last_results

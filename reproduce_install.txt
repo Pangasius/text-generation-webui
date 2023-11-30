@@ -26,3 +26,4 @@ pip install llama-hub pdf2docx "unstructured[all-docs]" nebula3-python exllamav2
 pip install -U pip
 pip install -U httpcore
 pip install bitsandbytes --no-build-isolation
+pip install span_marker

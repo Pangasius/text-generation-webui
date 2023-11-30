@@ -1,9 +1,6 @@
 """Module that define the extensions basic functions and calls the llama_index_extension."""
 import datetime
 import traceback
-from typing import List
-
-from colorama import Fore, Back
 
 import nest_asyncio
 
@@ -26,20 +23,7 @@ global LLAMA_INDEX_VARS
 LLAMA_INDEX_VARS = None
 
 DATASET = "conf_custo_embed"
-INDEX_NAME = "conf_custo_embed"
-
-
-def black_on_white(text: str) -> str:
-    """
-    Return the text in white on black background.
-
-    Args:
-        text (str): The text to colorize
-
-    Returns:
-        str: The colorized text
-    """
-    return Fore.BLACK + Back.WHITE + text + Fore.RESET + Back.RESET
+INDEX_NAME = "conf_custo_embed_entity"
 
 
 def setup():
@@ -50,7 +34,7 @@ def setup():
     nest_asyncio.apply()
 
     #TODO: Change when go to production
-    #wandb.init(project="Haulogy-First-Test")
+    wandb.init(project="Haulogy-First-Test")
 
     index = IndexEngine(index_name=INDEX_NAME, dataset=DATASET).as_retriever(kg=False,
                                             fine_tune=False,
@@ -141,21 +125,17 @@ def custom_generate_reply(*args, **kwargs):
                     "dataset": DATASET,
                     "config": shared.model_config})
 
-    print(
-        "----------------------------------------\n",
-        black_on_white("Args: ") + str(args) + "\n",
-        "----------------------------------------\n"
-    )
+    LLAMA_INDEX_VARS.current_span = llm_span
 
     question, original_question, seed, state, stopping_strings = args[:5]
 
-    original_question = question[question.rfind("You: ")+5:question.rfind("HaulogyBot:")]
+    original_question = question[question.rfind("You:") + 5:question.rfind("HaulogyBot:")]
 
     state["truncation_length"] = shared.args.n_ctx
 
     ans = ""
     try:
-        for ans in conf_jira_pipeline(original_question, seed, state, stopping_strings, LLAMA_INDEX_VARS):
+        for ans in conf_jira_pipeline(question, seed, state, stopping_strings, LLAMA_INDEX_VARS):
             yield ans
 
     except RuntimeError as e:
@@ -166,7 +146,7 @@ def custom_generate_reply(*args, **kwargs):
 
         end_time_ms = round(datetime.datetime.now().timestamp() * 1000)
         llm_span.inputs = {"query": original_question,
-                           "context": question}
+                           "history": question}
         llm_span.end_time_ms = end_time_ms
         llm_span.outputs = {"response": ans}
-        #llm_span.log(name="HauBot-test-Jira")
+        llm_span.log(name="HaulogyBot_Jira_Conf")

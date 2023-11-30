@@ -101,7 +101,7 @@ class IndexEngine():
     This class is used to index documents and retrieve them.
     It will interact with a vector store and can also interact with a knowledge graph.
     """
-    def __init__(self, index_name: str, dataset: str = None, embed_model="local:BAAI/bge-large-en-v1.5"):
+    def __init__(self, index_name: str, dataset: str|None = None, embed_model="local:BAAI/bge-large-en-v1.5"):
         print("Loading model...")
 
         path_to_model = Path(f'{shared.args.model_dir}/{shared.model_name}')
@@ -210,8 +210,7 @@ class IndexEngine():
 
         print("Size of all documents :", sum(list(map(lambda x: len(x.text), documents))))
 
-        # TODO: remove limitation
-        return documents[:30]
+        return documents
 
     def parse_documents(self):
         """
@@ -230,7 +229,7 @@ class IndexEngine():
         extractors = [
         #    TitleExtractor(nodes=5, llm=self.llm),
         #   QuestionsAnsweredExtractor(questions=3, llm=self.llm),
-            EntityExtractor(prediction_threshold=0.5, device="cuda:0"),
+            EntityExtractor(prediction_threshold=0.6, device="cuda:0"),
         #    SummaryExtractor(summaries=["prev", "self"], llm=self.llm),
         #    KeywordExtractor(keywords=10, llm=self.llm),
         ]

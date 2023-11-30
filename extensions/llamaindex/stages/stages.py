@@ -1,12 +1,23 @@
-from dataclasses import dataclass
-from typing import Callable, Generator, List
+"""
+This modules contains all the different functions used
+in the pipeline for answering user queries.
+
+In particular, it contains :
+- Offline Confluence querying tool
+- Online Jira querying tool
+- Summarization tool
+"""
+
+from attr import dataclass
+from typing import Callable, Generator, List, Optional
+import regex as re
+
+from wandb.sdk.data_types.trace_tree import Trace
 
 from llama_index.schema import (
     MetadataMode,
     NodeWithScore
 )
-
-import regex as re
 
 from extensions.llamaindex.llama_index_extension import BaseRetriever
 from extensions.llamaindex.tools.JiraTool import JiraToolSpec
@@ -17,17 +28,19 @@ class LlamaIndexVars():
     index: BaseRetriever
     jira_tool: JiraToolSpec
     generate_func: Callable[[str, str, int, dict, List[str]], Generator]
+    current_span: Optional[Trace] = None
 
 
-def annotate_response(response, title, header_size=3, sep_line=False) -> str:
+def annotate_response(response, title, header_size=3, sep_line=False, quote=True) -> str:
     """
     Wraps the response in a markdown block-quote and adds
     the title with a Header of size header-size.
     """
     header = "#" * header_size
     separator = "\n---\n" if sep_line else "\n"
+    quotation = "> " if quote else ""
 
-    return f"{header} {title}\n> {response}{separator}"
+    return f"{header} {title}\n{quotation}{response}{separator}"
 
 
 def get_meta_if_possible(nodes: List[NodeWithScore]) -> str:
@@ -97,9 +110,10 @@ def desc_and_template(question, function, additional=""):
         "Call the function with the correct arguments in one line of Python code.\n"
         "It is imperative your answer must only contain the described function and its arguments without any text.\n"
         "HaulogyBot:\n"
+        "{function_name}"
     )
 
-    return prompt_template.format(doc=function_description, question=question, additional=additional)
+    return prompt_template.format(doc=function_description, question=question, additional=additional, function_name=function.__name__)
 
 
 def query_jira_issue(question: str, seed: int, state: dict, stopping_strings: List[str], function, gen: Callable[[str, str, int, dict, List[str]], Generator]):
@@ -144,28 +158,36 @@ def tool_parse(response: str, function) -> str:
     function_name = function.__name__
 
     # Parse the response by extracting only the keyword(s)
-    arguments = re.findall(rf"{function_name}\((.+)\)", response)
+    arguments = re.findall(r"\(([^\(\)]+)\)", response)
 
     if len(arguments) == 0:
-        raise Exception("No arguments found in response for function " + function.__name__)
+        return f"FAILED: The function {function_name} was not called. Make sure to include {function_name}, parentheses and the keywords in between."
+
+    arguments = arguments[0]
 
     # Remove if necessary the "argument = " part
 
     if arguments.__contains__("="):
-        arguments[0] = arguments[0].split("=")[1]
+        arguments = arguments.split("=")[1]
 
     if arguments.__contains__(":"):
-        arguments[0] = arguments[0].split(":")[1]
+        arguments = arguments.split(":")[1]
 
     # Remove the quotes if necessary
 
-    arguments[0] = arguments[0].replace("'", "")
-    arguments[0] = arguments[0].replace('"', "")
+    arguments = arguments.replace("'", "")
+    arguments = arguments.replace('"', "")
 
-    return function(arguments[0])
+    # Finally, trim the arguments
+    arguments = arguments.strip()
+
+    try:
+        return function(arguments)
+    except Exception as e:
+        return f"ERROR: The function {function_name} was called with arguments {arguments} but failed with the following error: {e}"
 
 
-def chunk_detail(context: str, question, seed: int, state: dict, stopping_strings: List[str], start: int, end: int, gen: Callable[[str, str, int, dict, List[str]], Generator]):
+def chunk_detail(context: str, question, seed: int, state: dict, stopping_strings: List[str], gen: Callable[[str, str, int, dict, List[str]], Generator]):
     """
     In this stage, we will post-process the retrieved context so that it can enter in the LLM.
     To do this, we will pass a rolling window of 4096 characters to create summaries of the context.
@@ -180,10 +202,11 @@ def chunk_detail(context: str, question, seed: int, state: dict, stopping_string
         "```\n"
         "Above is a portion of text you must summarize so that you keep all the information needed to answer the query.\n"
         "Query: {question}\n"
+        "Do not include any outside information in your answer.\n"
         "HaulogyBot:\n"
     )
 
-    prompt = prompt.format(question=question, context=context[start:end])
+    prompt = prompt.format(question=question, context=context)
 
     return gen(prompt, prompt, seed, state, stopping_strings)
 
@@ -194,10 +217,13 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
     It will call all the functions above in order.
     """
 
+    # Initialize the variables
     all_responses = []
 
     ans = ""
     gen = llama_index_vars.generate_func
+
+    current_span = llama_index_vars.current_span
 
     # First, query Jira for issues
     query_function = llama_index_vars.jira_tool.jira_query
@@ -209,8 +235,16 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
     response = ans
     all_responses.append(annotate_response(response, "Jira Query"))
 
+    wandb_trace("HaulogyBot_Jira_Query", question, response, current_span)
+
     # Parse the response and call the tool
     issues = tool_parse(response, query_function)
+
+    wandb_trace("HaulogyBot_Jira_Query_Parse", response, issues, current_span)
+
+    if issues.startswith("FAILED") or issues.startswith("ERROR"):
+        yield "\n".join(all_responses) + "\n" + issues
+        return
 
     # Then, detail an issue
     query_function_detail = llama_index_vars.jira_tool.detail_issue
@@ -223,8 +257,21 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
     state["jira_metadata"] = "Issue queried:\n> " + ans + "\nCandidate issues:\n> " + issues.replace("\n", "\n>") + "\n"
     all_responses.append(annotate_response(response, "Jira Detail"))
 
+    wandb_trace("HaulogyBot_Jira_Detail", question, response, current_span)
+
     # Parse the response and call the tool
     context = tool_parse(response, query_function_detail)
+
+    wandb_trace("HaulogyBot_Jira_Detail_Parse", response, context, current_span)
+
+    if context.startswith("FAILED") or context.startswith("ERROR"):
+        yield "\n".join(all_responses) + "\n" + context
+        return
+
+    # create a span for the summarize stage
+    summarize_span = Trace(
+        name="Summarize",
+    )
 
     # Chunkify the context using a rolling window of 4096 characters
     # Do this until the result fits in 4096 characters
@@ -237,15 +284,21 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
         answers = []
         for start in range(0, len(context), length_skip):
             end = min(start + length_skip, len(context))
-            response = chunk_detail(context, question, seed, state, stopping_strings, start, end, gen)
+            response = chunk_detail(context[start:end], question, seed, state, stopping_strings, gen)
 
             # Unroll the generator
             for ans in response:
                 yield "\n".join(all_responses) + "\n" + ans
             answers.append(ans)
             all_responses.append(annotate_response(ans, "Jira Chunk"))
+
+            wandb_trace(f"HaulogyBot_Jira_Chunk_{start}_{end}", context[start:end], ans, summarize_span)
+
         context = "\n".join(answers)
         all_responses = all_responses[:-len(answers)]
+
+    if current_span is not None:
+        current_span.add_child(summarize_span)
 
     # Return the final context, which is supposed to be the final summary
     yield "\n".join(all_responses) + "\n" + annotate_response(context, "Jira Summary")
@@ -306,38 +359,87 @@ def compose_response(question: str, first_response: str, second_response: str, s
     return llama_index_vars.generate_func(prompt, prompt, seed, state, stopping_strings)
 
 
+def restate_question(question: str, seed: int, state: dict, stopping_strings: List[str], llama_index_vars: LlamaIndexVars):
+    """
+    Given the chat history and the question, restate the question in one sentence.
+    """
+
+    prompt = (
+        "{question}\n"
+        "Given the chat history above, restate the last user's question in a single sentence.'\n"
+        "Keep the question brief. It should not be longer than 50 words.\n"
+        "HaulogyBot:\n"
+    )
+
+    prompt = prompt.format(question=question)
+
+    return llama_index_vars.generate_func(prompt, prompt, seed, state, stopping_strings)
+
+
+def wandb_trace(name: str, inputs: str, outputs: str, parent: Trace | None):
+
+    conf_jira_span = Trace(
+        name=name,
+        inputs={"query": inputs},
+        outputs={"response": outputs},
+    )
+
+    if parent is not None:
+        parent.add_child(conf_jira_span)
+
+
 def conf_jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[str], llama_index_vars: LlamaIndexVars):
     """
     This function is the main pipeline for the Confluence and Jira tools.
     It will call all the functions above in order.
     """
 
-    ans = ""
+    # Initialize the variables
+    first_response = ""
+    second_response = ""
+    final_response = ""
+    original_question = question
     all_responses = []
 
-    # Use the jira pipeline to get the first response
-    response = jira_pipeline(question, seed, state, stopping_strings, llama_index_vars)
+    current_span = llama_index_vars.current_span
+
+    # First, restate the question
+    response_gen_restate = restate_question(question, seed, state, stopping_strings, llama_index_vars)
 
     # Unroll the generator
-    for ans in response:
-        yield ans
-    all_responses.append(annotate_response(ans, "Jira Pipeline", header_size=2, sep_line=True))
+    for question in response_gen_restate:
+        yield question
+    all_responses.append(annotate_response(question, "Restated question", header_size=2, sep_line=True, quote=True))
 
-    first_response = ans
+    wandb_trace("HaulogyBot_Restate", original_question, question, current_span)
+
+    # Use the jira pipeline to get the first response
+    response_gen_jira = jira_pipeline(question, seed, state, stopping_strings, llama_index_vars)
+
+    # Unroll the generator
+    for first_response in response_gen_jira:
+        yield first_response
+    all_responses.append(annotate_response(first_response, "Jira Pipeline", header_size=2, sep_line=True, quote=False))
+
+    wandb_trace("HaulogyBot_Jira", question, first_response, current_span)
 
     # Then, use the search tool to get the second response
-    response = query_confluence_index(question, seed, state, stopping_strings, llama_index_vars)
+    response_gen_conf = query_confluence_index(question, seed, state, stopping_strings, llama_index_vars)
 
     # Unroll the generator
-    for ans in response:
-        yield "\n".join(all_responses) + "\n" + ans
-    all_responses.append(annotate_response(ans, "Confluence search Tool", header_size=2, sep_line=True))
+    for second_response in response_gen_conf:
+        yield "\n".join(all_responses) + "\n" + second_response
+    all_responses.append(annotate_response(second_response, "Confluence search Tool", header_size=2, sep_line=True))
 
-    second_response = ans
+    wandb_trace("HaulogyBot_Confluence", question, second_response, current_span)
 
     # Finally, compose the two responses
     response = compose_response(question, first_response, second_response, seed, state, stopping_strings, llama_index_vars)
 
     # Unroll the generator
-    for ans in response:
-        yield "\n".join(all_responses) + "\n" + annotate_response(ans, "Final answer", header_size=1)
+    for final_response in response:
+        yield "\n".join(all_responses) + "\n" + final_response
+
+    wandb_trace("HaulogyBot_Compose", question, final_response, current_span)
+
+    yield "\n".join(all_responses) + "\n" + annotate_response(final_response, "Final answer", header_size=1)
