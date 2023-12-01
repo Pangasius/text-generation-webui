@@ -32,14 +32,16 @@ os.environ[
 
 
 def connect_store(store: str, index_name: str, service_context: ServiceContext):
+    """Choose the store to connect to and return the corresponding index object."""
+
     if store == "nebula":
         return connect_nebulagraph(index_name, service_context)
-    elif store == "postgresql":
+    if store == "postgresql":
         return connect_postgresql(index_name, service_context)
-    elif store == "elastic":
+    if store == "elastic":
         return connect_elastic(index_name, service_context)
-    else:
-        raise ValueError("Store not supported")
+
+    raise ValueError("Store not supported")
 
 
 def connect_nebulagraph(index_name: str, service_context: ServiceContext) -> KGI:

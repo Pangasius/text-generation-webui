@@ -232,7 +232,7 @@ class IndexEngine():
             KeywordExtractor(keywords=10, llm=self.llm),
         ]
 
-        transformations = [node_parser] + extractors[2]  # for now we only use the entity extractor
+        transformations = [node_parser + extractors[2]]  # for now we only use the entity extractor
 
         pipeline = IngestionPipeline(transformations=transformations)
 
