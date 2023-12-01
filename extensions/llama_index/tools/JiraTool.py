@@ -58,7 +58,7 @@ class JiraToolSpec(BaseTool):
     spec_functions = ["jira_query", "detail_issue"]
 
     def __init__(self, app_id: Optional[str] = None) -> None:
-        with open("extensions/llamaindex/tools/details.json", "r") as infile:
+        with open("extensions/llama_index/tools/details.json", "r") as infile:
             config = json.load(infile)
 
         self.categories = config["categories"]
@@ -66,7 +66,6 @@ class JiraToolSpec(BaseTool):
         self.last_results = None
         self.last_details = None
         self.last_summary = None
-        self.cookies = self._get_cookies()
 
     def _get_cookies(self) -> Dict[str, str]:
         """Opens a session with Jira and returns the cookies"""
@@ -92,13 +91,15 @@ class JiraToolSpec(BaseTool):
         Args:
             query (str): a comma separated list of keywords
         """
+        # Get cookies
+        cookies = self._get_cookies()
 
         # Parse query
         keywords = query.split(",")
         jira_query = JiraQuery.default_keyword_query(keywords, self.categories)
 
         # Make query
-        response = requests.request("GET", URL_BASE, headers=HEADERS, params=jira_query.__dict__, cookies=self.cookies)
+        response = requests.request("GET", URL_BASE, headers=HEADERS, params=jira_query.__dict__, cookies=cookies)
         if response.status_code != 200:
             raise Exception("Query failed with status code " + str(response.status_code) + ".")
 

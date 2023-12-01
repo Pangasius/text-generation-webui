@@ -1,29 +1,16 @@
 # for unstructured, deepspeed
 sudo apt-get install libreoffice libaio-dev
 
-# conda torch
-conda install pytorch torchvision torchaudio pytorch-cuda=12.1 cuda-nvcc -c pytorch -c nvidia
-
-# conda special that often have conflicts so do it alone
-conda install -c conda-forge mpi4py mpich
-
-# conda other
-conda install -c conda-forge regex pytesseract markdown transformers accelerate datasets scipy sentencepiece protobuf sentence-transformers colorama einops optimum tensorboard wandb scikit-learn-intelex xformers llama-index peft bitsandbytes deepspeed
-
-# not on conda
-pip install llama-hub pdf2docx "unstructured[all-docs]" nebula3-python exllamav2 deepspeed gradio auto-gptq torch_grammar
-
-# install postgres db
-# install https://github.com/pgvector/pgvector
-pip install psycopg2-binary pgvector asyncpg "sqlalchemy[asyncio]" greenlet nest-asyncio
-
-
-# more recent install
-
+# all torch dependent stuff
 conda create -n ChatBot pytorch=2.1.1 torchvision torchaudio cudatoolkit transformers accelerate sentencepiece protobuf sentence-transformers optimum peft deepspeed -c pytorch -c nvidia -c conda-forge
+
+# on conda but too much for it being done in one conda call (otherwise loads forever)
 conda install mpi4py mpich pytesseract markdown datasets scipy colorama einops tensorboard wandb scikit-learn-intelex llama-index -c conda-forge
-pip install llama-hub pdf2docx "unstructured[all-docs]" nebula3-python exllamav2 gradio==3.37 auto-gptq torch_grammar psycopg2-binary pgvector asyncpg "sqlalchemy[asyncio]" greenlet nest-asyncio --upgrade-strategy only-if-needed --no-build-isolation
+
+# the rest
+pip install llama-hub pdf2docx "unstructured[all-docs]" nebula3-python exllamav2 gradio==3.37 auto-gptq torch_grammar psycopg2-binary pgvector asyncpg "sqlalchemy[asyncio]" greenlet nest-asyncio span_marker --upgrade-strategy only-if-needed --no-build-isolation
+
+# fixes and bitsandbytes since it often doesn't work with conda install
 pip install -U pip
 pip install -U httpcore
 pip install bitsandbytes --no-build-isolation
-pip install span_marker

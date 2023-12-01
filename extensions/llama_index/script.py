@@ -6,7 +6,7 @@ import nest_asyncio
 
 import wandb
 from wandb.sdk.data_types.trace_tree import Trace
-from extensions.llamaindex.tools.JiraTool import JiraToolSpec
+from extensions.llama_index.tools.JiraTool import JiraToolSpec
 
 from modules import shared
 
@@ -15,9 +15,9 @@ from modules.text_generation import (
     generate_reply_custom,
 )
 
-from extensions.llamaindex.llama_index_extension import IndexEngine
+from extensions.llama_index.llama_index_extension import IndexEngine
 
-from extensions.llamaindex.stages.stages import LlamaIndexVars, conf_jira_pipeline
+from extensions.llama_index.stages.stages import LlamaIndexVars, conf_jira_pipeline
 
 global LLAMA_INDEX_VARS
 LLAMA_INDEX_VARS = None
@@ -33,7 +33,7 @@ def setup():
     """
     nest_asyncio.apply()
 
-    #TODO: Change when go to production
+    # TODO: Change when go to production
     wandb.init(project="Haulogy-First-Test")
 
     index = IndexEngine(index_name=INDEX_NAME, dataset=DATASET).as_retriever(kg=False,

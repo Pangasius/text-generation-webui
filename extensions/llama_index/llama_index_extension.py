@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import glob
 import os
-from typing import List
+from typing import List, Sequence
 
 import regex as re
 import pytesseract
@@ -20,11 +20,9 @@ from llama_index import (
 from llama_index.llms import HuggingFaceLLM
 from llama_index.schema import NodeWithScore, BaseNode
 from llama_index.retrievers import (
-    BaseRetriever,
-    VectorIndexRetriever,
-    KnowledgeGraphRAGRetriever
+    BaseRetriever
 )
-from llama_index.node_parser import SimpleNodeParser
+from llama_index.node_parser import SentenceSplitter
 from llama_index.embeddings import (
     resolve_embed_model,
     AdapterEmbeddingModel
@@ -47,8 +45,8 @@ from llama_index.ingestion import IngestionPipeline
 
 from modules import shared
 
-from extensions.llamaindex.tools.reader import ConfluenceReader, JiraReader
-from extensions.llamaindex.tools.connections import connect_nebulagraph, connect_postgresql, connect_elastic
+from extensions.llama_index.tools.reader import ConfluenceReader, JiraReader
+from extensions.llama_index.tools.connections import connect_store
 
 from transformers import AutoConfig
 
@@ -63,14 +61,14 @@ class CustomRetriever(BaseRetriever):
 
     def __init__(
         self,
-        vector_retriever: VectorIndexRetriever,
-        kg_retriever: KnowledgeGraphRAGRetriever,
+        retriever_1: BaseRetriever,
+        retriever_2: BaseRetriever,
         mode: str = "OR",
     ) -> None:
         """Init params."""
 
-        self._vector_retriever = vector_retriever
-        self._kg_retriever = kg_retriever
+        self.retriever_1 = retriever_1
+        self.retriever_2 = retriever_2
         if mode not in ("AND", "OR"):
             raise ValueError("Invalid mode.")
         self._mode = mode
@@ -78,14 +76,14 @@ class CustomRetriever(BaseRetriever):
     def _retrieve(self, query_bundle: QueryBundle) -> List[NodeWithScore]:
         """Retrieve nodes given query."""
 
-        vector_nodes = self._vector_retriever.retrieve(query_bundle)
-        kg_nodes = self._kg_retriever.retrieve(query_bundle)
+        nodes_1 = self.retriever_1.retrieve(query_bundle)
+        nodes_2 = self.retriever_2.retrieve(query_bundle)
 
-        vector_ids = {n.node.node_id for n in vector_nodes}
-        kg_ids = {n.node.node_id for n in kg_nodes}
+        vector_ids = {n.node.node_id for n in nodes_1}
+        kg_ids = {n.node.node_id for n in nodes_2}
 
-        combined_dict = {n.node.node_id: n for n in vector_nodes}
-        combined_dict.update({n.node.node_id: n for n in kg_nodes})
+        combined_dict = {n.node.node_id: n for n in nodes_1}
+        combined_dict.update({n.node.node_id: n for n in nodes_2})
 
         if self._mode == "AND":
             retrieve_ids = vector_ids.intersection(kg_ids)
@@ -101,7 +99,7 @@ class IndexEngine():
     This class is used to index documents and retrieve them.
     It will interact with a vector store and can also interact with a knowledge graph.
     """
-    def __init__(self, index_name: str, dataset: str|None = None, embed_model="local:BAAI/bge-large-en-v1.5"):
+    def __init__(self, index_name: str, dataset: str | None = None, embed_model="local:BAAI/bge-large-en-v1.5"):
         print("Loading model...")
 
         path_to_model = Path(f'{shared.args.model_dir}/{shared.model_name}')
@@ -223,18 +221,18 @@ class IndexEngine():
         documents = self.read_documents()
 
         # transform documents into nodes
-        node_parser = SimpleNodeParser.from_defaults(chunk_size=1024,
+        node_parser = SentenceSplitter.from_defaults(chunk_size=1024,
                                                      chunk_overlap=128)
 
         extractors = [
-        #    TitleExtractor(nodes=5, llm=self.llm),
-        #   QuestionsAnsweredExtractor(questions=3, llm=self.llm),
+            TitleExtractor(nodes=5, llm=self.llm),
+            QuestionsAnsweredExtractor(questions=3, llm=self.llm),
             EntityExtractor(prediction_threshold=0.6, device="cuda:0"),
-        #    SummaryExtractor(summaries=["prev", "self"], llm=self.llm),
-        #    KeywordExtractor(keywords=10, llm=self.llm),
+            SummaryExtractor(summaries=["prev", "self"], llm=self.llm),
+            KeywordExtractor(keywords=10, llm=self.llm),
         ]
 
-        transformations = [node_parser] + extractors
+        transformations = [node_parser] + extractors[2]  # for now we only use the entity extractor
 
         pipeline = IngestionPipeline(transformations=transformations)
 
@@ -248,25 +246,23 @@ class IndexEngine():
 
         return nodes
 
-    def save_nodes(self, nodes: List[BaseNode], kg=False):
+    def save_nodes(self, nodes: Sequence[BaseNode], kg=False):
         """
         Saves the nodes into a vector store and a optionally knowledge graph.
 
         Args:
-            nodes (List[BaseNode]): The list of nodes to be saved
+            nodes (Sequence[BaseNode]): The sequence of nodes to be saved
             kg (bool, optional): Whether to save the nodes into a knowledge graph.
                                  Defaults to False.
         """
 
         print("Indexing into a vector store...")
-        # vector_store = connect_elastic(self.index_name, service_context=self.service_context)
-        vector_store = connect_postgresql(self.index_name, service_context=self.service_context)
-
+        vector_store = connect_store("postgresql", self.index_name, service_context=self.service_context)
         vector_store.build_index_from_nodes(nodes=nodes)
 
         if kg:
             print("Indexing into a knowledge graph...")
-            kg_store = connect_nebulagraph(service_context=self.service_context)
+            kg_store = connect_store("nebulagraph", "llamaindex", service_context=self.service_context)
             kg_store.build_index_from_nodes(nodes=nodes)
 
     def get_retrievers(self, kg=True):
@@ -281,10 +277,10 @@ class IndexEngine():
             VectorIndexRetriever, KnowledgeGraphRAGRetriever: The retrievers
         """
 
-        print("Indexing documents...")
+        print("Getting vector store...")
 
         # vector_index = connect_elastic(self.index_name, service_context=self.service_context)
-        vector_index = connect_postgresql(self.index_name, service_context=self.service_context)
+        vector_index = connect_store("postgresql", self.index_name, service_context=self.service_context)
 
         vec_retriever = vector_index.as_retriever(
             similarity_top_k=3,
@@ -293,23 +289,23 @@ class IndexEngine():
 
         kg_retriever = None
         if kg:
+            print("Getting knowledge graph...")
             # Graph store params
-            graph_store = connect_nebulagraph(service_context=self.service_context)
+            graph_store = connect_store("nebulagraph", "llamaindex", service_context=self.service_context)
 
             kg_retriever = graph_store.as_retriever()
 
-        print("Indexing complete")
         return vec_retriever, kg_retriever
 
-    def fine_tune(self, nodes: List[BaseNode] | None,
+    def fine_tune(self, nodes: Sequence[BaseNode] | None,
                   out_path: str):
         """
-        Creates a fine_tuned embedding model based on the list of nodes provided.
-        If the list of nodes is None or the name of the model already exists,
+        Creates a fine_tuned embedding model based on the sequence of nodes provided.
+        If the sequence of nodes is None or the name of the model already exists,
         the model is loaded instead.
 
         Args:
-            nodes (List[BaseNode] | None): The list of nodes to be used for fine-tuning
+            nodes (Sequence[BaseNode] | None): The sequence of nodes to be used for fine-tuning
             out_path (str): The path to save the model to
 
         Raises:
@@ -330,7 +326,7 @@ class IndexEngine():
 
         if not os.path.exists(dataset_path) and nodes is not None:
             print("Generating QA dataset...")
-            dataset = generate_qa_embedding_pairs(nodes,
+            dataset = generate_qa_embedding_pairs(list(nodes),
                                                   llm=self.llm,
                                                   num_questions_per_chunk=2)
 

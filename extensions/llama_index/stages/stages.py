@@ -19,8 +19,8 @@ from llama_index.schema import (
     NodeWithScore
 )
 
-from extensions.llamaindex.llama_index_extension import BaseRetriever
-from extensions.llamaindex.tools.JiraTool import JiraToolSpec
+from extensions.llama_index.llama_index_extension import BaseRetriever
+from extensions.llama_index.tools.JiraTool import JiraToolSpec
 
 
 @dataclass

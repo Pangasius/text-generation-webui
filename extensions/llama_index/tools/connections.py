@@ -31,7 +31,18 @@ os.environ[
 # CREATE TAG INDEX entity_index ON entity(name(256));
 
 
-def connect_nebulagraph(service_context: ServiceContext) -> KGI:
+def connect_store(store: str, index_name: str, service_context: ServiceContext):
+    if store == "nebula":
+        return connect_nebulagraph(index_name, service_context)
+    elif store == "postgresql":
+        return connect_postgresql(index_name, service_context)
+    elif store == "elastic":
+        return connect_elastic(index_name, service_context)
+    else:
+        raise ValueError("Store not supported")
+
+
+def connect_nebulagraph(index_name: str, service_context: ServiceContext) -> KGI:
     """
     Connect to NebulaGraph and return a KnowledgeGraphIndex object.
 
@@ -43,7 +54,7 @@ def connect_nebulagraph(service_context: ServiceContext) -> KGI:
     """
 
     graph_store = NebulaGraphStore(
-        space_name="llamaindex",
+        space_name=index_name,
         edge_types=["relationship"],
         rel_prop_names=["relationship"],
         tags=["entity"],
