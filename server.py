@@ -9,6 +9,8 @@ from functools import partial
 from pathlib import Path
 from threading import Lock
 
+import accelerate  # This early import makes Intel GPUs happy
+
 import matplotlib
 
 from modules.block_requests import OpenMonkeyPatch, RequestBlocker
