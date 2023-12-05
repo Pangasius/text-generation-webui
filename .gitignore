@@ -25,9 +25,10 @@
 .DS_Store
 .eslintrc.js
 .idea
-.env
 .venv
 venv
+.envrc
+.direnv
 .vscode
 *.bak
 *.ipynb
@@ -39,16 +40,20 @@ package.json
 package-lock.json
 Thumbs.db
 
-wandb
-
 .chroma
 installer_files
 
+wandb
+
 /CMD_FLAGS.txt
 
-examples/
-wandb/
+# ignore user docker config and top level links to docker files
+/docker-compose.yaml
+/docker-compose.yml
+/Dockerfile
+.env
 
+examples/
 
 .pylintrc
 

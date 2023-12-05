@@ -8,9 +8,10 @@ In particular, it contains :
 - Summarization tool
 """
 
-from attr import dataclass
 from typing import Callable, Generator, List, Optional
 import regex as re
+
+from attr import dataclass
 
 from wandb.sdk.data_types.trace_tree import Trace
 
@@ -20,11 +21,12 @@ from llama_index.schema import (
 )
 
 from extensions.llama_index.llama_index_extension import BaseRetriever
-from extensions.llama_index.tools.JiraTool import JiraToolSpec
+from extensions.llama_index.tools.jira_tool import JiraToolSpec, JiraQueryError
 
 
 @dataclass
 class LlamaIndexVars():
+    """Dataclasss containing the variables needed for the pipeline"""
     index: BaseRetriever
     jira_tool: JiraToolSpec
     generate_func: Callable[[str, str, int, dict, List[str]], Generator]
@@ -86,17 +88,20 @@ def desc_and_template(question, function, additional=""):
 
     args = function.__annotations__  # Get the arguments of the function
 
-    reformed = [f"{name}: {type_.__name__}" if name != "return" else "" for name, type_ in list(zip(args.keys(), args.values()))]
+    reformed = [f"{name}: {type_.__name__}"
+                if name != "return"
+                else "" for name, type_ in list(zip(args.keys(), args.values()))]
 
     reformed = [x for x in reformed if x != ""]
 
-    function_description = (
-        function.__name__ + str(reformed).replace("[", "(").replace("]", ")") + ":" + function.__doc__
-    )
+    function_description = function.__name__ +\
+        str(reformed).replace("[", "(").replace("]", ")") +\
+            ":" + function.__doc__
 
     prompt_template = (
         "System:\n"
-        "You (HaulogyBot) are a helpful chatbot that answers questions about Haulogy. You can access with one line commands special tools such as the Jira search tool.\n"
+        "You (HaulogyBot) are a helpful chatbot that answers questions about Haulogy. \
+            You can access with one line commands special tools such as the Jira search tool.\n"
         "Task:\n"
         "Given the following function description:\n"
         "```\n"
@@ -108,15 +113,19 @@ def desc_and_template(question, function, additional=""):
         "```\n"
         "{additional}"
         "Call the function with the correct arguments in one line of Python code.\n"
-        "It is imperative your answer must only contain the described function and its arguments without any text.\n"
+        "It is imperative your answer must only contain the described \
+            function and its arguments without any text.\n"
         "HaulogyBot:\n"
         "{function_name}"
     )
 
-    return prompt_template.format(doc=function_description, question=question, additional=additional, function_name=function.__name__)
+    return prompt_template.format(doc=function_description, question=question,
+                                  additional=additional, function_name=function.__name__)
 
 
-def query_jira_issue(question: str, seed: int, state: dict, stopping_strings: List[str], function, gen: Callable[[str, str, int, dict, List[str]], Generator]):
+def query_jira_issue(question: str, seed: int, state: dict,
+                     stopping_strings: List[str], function,
+                     gen: Callable[[str, str, int, dict, List[str]], Generator]):
     """
     In this first stage, we will let the LLM use the first functionality of the Jira tool:
     - Query Jira for issues
@@ -129,7 +138,9 @@ def query_jira_issue(question: str, seed: int, state: dict, stopping_strings: Li
     return gen(prompt, prompt, seed, state, stopping_strings)
 
 
-def query_jira_detail(question: str, issues: str, seed: int, state: dict, stopping_strings: List[str], function, gen: Callable[[str, str, int, dict, List[str]], Generator]):
+def query_jira_detail(question: str, issues: str, seed: int,
+                      state: dict, stopping_strings: List[str],
+                      function, gen: Callable[[str, str, int, dict, List[str]], Generator]):
     """
     In ths stage, we will let the LLM use the second functionality of the Jira tool:
     - Detail an issue
@@ -140,9 +151,9 @@ def query_jira_detail(question: str, issues: str, seed: int, state: dict, stoppi
     additional_prompt = (
         "This is the list of issues returned by the Jira tool:\n"
         "```\n"
-        "{issues}\n"
+        f"{issues}\n"
         "```\n"
-    ).format(issues=issues)
+    )
 
     prompt = desc_and_template(question, function, additional=additional_prompt)
 
@@ -161,16 +172,17 @@ def tool_parse(response: str, function) -> str:
     arguments = re.findall(r"\(([^\(\)]+)\)", response)
 
     if len(arguments) == 0:
-        return f"FAILED: The function {function_name} was not called. Make sure to include {function_name}, parentheses and the keywords in between."
+        return f"FAILED: The function {function_name} was not called.\
+            Make sure to include {function_name}, parentheses and the keywords in between."
 
     arguments = arguments[0]
 
     # Remove if necessary the "argument = " part
 
-    if arguments.__contains__("="):
+    if "=" in arguments:
         arguments = arguments.split("=")[1]
 
-    if arguments.__contains__(":"):
+    if ":" in arguments:
         arguments = arguments.split(":")[1]
 
     # Remove the quotes if necessary
@@ -183,11 +195,14 @@ def tool_parse(response: str, function) -> str:
 
     try:
         return function(arguments)
-    except Exception as e:
-        return f"ERROR: The function {function_name} was called with arguments {arguments} but failed with the following error: {e}"
+    except JiraQueryError as e:
+        return f"ERROR: The function {function_name} was called with\
+            arguments {arguments} but failed with the following error: {e}"
 
 
-def chunk_detail(context: str, question, seed: int, state: dict, stopping_strings: List[str], gen: Callable[[str, str, int, dict, List[str]], Generator]):
+def chunk_detail(context: str, question, seed: int,
+                 state: dict, stopping_strings: List[str],
+                 gen: Callable[[str, str, int, dict, List[str]], Generator]):
     """
     In this stage, we will post-process the retrieved context so that it can enter in the LLM.
     To do this, we will pass a rolling window of 4096 characters to create summaries of the context.
@@ -200,7 +215,8 @@ def chunk_detail(context: str, question, seed: int, state: dict, stopping_string
         "```\n"
         "{context}\n"
         "```\n"
-        "Above is a portion of text you must summarize so that you keep all the information needed to answer the query.\n"
+        "Above is a portion of text you must summarize so that\
+            you keep all the information needed to answer the query.\n"
         "Query: {question}\n"
         "Do not include any outside information in your answer.\n"
         "HaulogyBot:\n"
@@ -211,7 +227,9 @@ def chunk_detail(context: str, question, seed: int, state: dict, stopping_string
     return gen(prompt, prompt, seed, state, stopping_strings)
 
 
-def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[str], llama_index_vars: LlamaIndexVars):
+def jira_pipeline(question: str, seed: int, state: dict,
+                  stopping_strings: List[str],
+                  llama_index_vars: LlamaIndexVars):
     """
     This function is the main pipeline for the Jira tool.
     It will call all the functions above in order.
@@ -227,7 +245,8 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
 
     # First, query Jira for issues
     query_function = llama_index_vars.jira_tool.jira_query
-    response = query_jira_issue(question, seed, state, stopping_strings, query_function, gen)
+    response = query_jira_issue(question, seed, state,
+                                stopping_strings, query_function, gen)
 
     # Unroll the generator
     for ans in response:
@@ -248,13 +267,16 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
 
     # Then, detail an issue
     query_function_detail = llama_index_vars.jira_tool.detail_issue
-    response = query_jira_detail(question, issues, seed, state, stopping_strings, query_function_detail, gen)
+    response = query_jira_detail(question, issues, seed, state,
+                                 stopping_strings, query_function_detail, gen)
 
     # Unroll the generator
     for ans in response:
         yield "\n".join(all_responses) + "\n" + ans
     response = ans
-    state["jira_metadata"] = "Issue queried:\n> " + ans + "\nCandidate issues:\n> " + issues.replace("\n", "\n>") + "\n"
+    state["jira_metadata"] = "Issue queried:\n> " +\
+        ans + "\nCandidate issues:\n> " +\
+            issues.replace("\n", "\n>") + "\n"
     all_responses.append(annotate_response(response, "Jira Detail"))
 
     wandb_trace("HaulogyBot_Jira_Detail", question, response, current_span)
@@ -284,7 +306,8 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
         answers = []
         for start in range(0, len(context), length_skip):
             end = min(start + length_skip, len(context))
-            response = chunk_detail(context[start:end], question, seed, state, stopping_strings, gen)
+            response = chunk_detail(context[start:end], question,
+                                    seed, state, stopping_strings, gen)
 
             # Unroll the generator
             for ans in response:
@@ -292,7 +315,8 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
             answers.append(ans)
             all_responses.append(annotate_response(ans, "Jira Chunk"))
 
-            wandb_trace(f"HaulogyBot_Jira_Chunk_{start}_{end}", context[start:end], ans, summarize_span)
+            wandb_trace(f"HaulogyBot_Jira_Chunk_{start}_{end}", context[start:end],
+                        ans, summarize_span)
 
         context = "\n".join(answers)
         all_responses = all_responses[:-len(answers)]
@@ -304,9 +328,12 @@ def jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[
     yield "\n".join(all_responses) + "\n" + annotate_response(context, "Jira Summary")
 
 
-def query_confluence_index(question: str, seed: int, state: dict, stopping_strings: List[str], llama_index_vars: LlamaIndexVars):
+def query_confluence_index(question: str, seed: int, state: dict,
+                           stopping_strings: List[str],
+                           llama_index_vars: LlamaIndexVars):
     """
-    In this stage, we will use standard retrieval to retrieve the most relevant documents and get a response from the LLM.
+    In this stage, we will use standard retrieval to retrieve the most
+    relevant documents and get a response from the LLM.
     """
 
     resp = llama_index_vars.index.retrieve(question)
@@ -333,9 +360,13 @@ def query_confluence_index(question: str, seed: int, state: dict, stopping_strin
     return llama_index_vars.generate_func(prompt, prompt, seed, state, stopping_strings)
 
 
-def compose_response(question: str, first_response: str, second_response: str, seed: int, state: dict, stopping_strings: List[str], llama_index_vars: LlamaIndexVars):
+def compose_response(question: str, first_response: str,
+                     second_response: str, seed: int, state: dict,
+                     stopping_strings: List[str],
+                     llama_index_vars: LlamaIndexVars):
     """
-    In this last stage, we will present both answers from the Jira tool and the LLM and let the LLM improve them into a final response.
+    In this last stage, we will present both answers from
+    the Jira tool and the LLM and let the LLM improve them into a final response.
     """
 
     prompt = (
@@ -354,19 +385,25 @@ def compose_response(question: str, first_response: str, second_response: str, s
         "HaulogyBot:\n"
     )
 
-    prompt = prompt.format(first_response=first_response, second_response=second_response, question=question)
+    prompt = prompt.format(first_response=first_response,
+                           second_response=second_response, question=question)
 
-    return llama_index_vars.generate_func(prompt, prompt, seed, state, stopping_strings)
+    return llama_index_vars.generate_func(prompt, prompt,
+                                          seed, state, stopping_strings)
 
 
-def restate_question(question: str, seed: int, state: dict, stopping_strings: List[str], llama_index_vars: LlamaIndexVars):
+def restate_question(question: str, seed: int, state: dict,
+                     stopping_strings: List[str],
+                     llama_index_vars: LlamaIndexVars):
     """
-    Given the chat history and the question, restate the question in one sentence.
+    Given the chat history and the question,
+    restate the question in one sentence.
     """
 
     prompt = (
         "{question}\n"
-        "Given the chat history above, restate the last user's question in a single sentence.'\n"
+        "Given the chat history above, \
+            restate the last user's question in a single sentence.'\n"
         "Keep the question brief. It should not be longer than 50 words.\n"
         "HaulogyBot:\n"
     )
@@ -377,7 +414,7 @@ def restate_question(question: str, seed: int, state: dict, stopping_strings: Li
 
 
 def wandb_trace(name: str, inputs: str, outputs: str, parent: Trace | None):
-
+    """Creates a child trace for the current span"""
     conf_jira_span = Trace(
         name=name,
         inputs={"query": inputs},
@@ -388,58 +425,68 @@ def wandb_trace(name: str, inputs: str, outputs: str, parent: Trace | None):
         parent.add_child(conf_jira_span)
 
 
-def conf_jira_pipeline(question: str, seed: int, state: dict, stopping_strings: List[str], llama_index_vars: LlamaIndexVars):
+def conf_jira_pipeline(question: str, seed: int, state: dict,
+                       stopping_strings: List[str],
+                       llama_index_vars: LlamaIndexVars):
     """
     This function is the main pipeline for the Confluence and Jira tools.
     It will call all the functions above in order.
     """
 
     # Initialize the variables
-    first_response = ""
-    second_response = ""
-    final_response = ""
-    original_question = question
     all_responses = []
-
     current_span = llama_index_vars.current_span
 
     # First, restate the question
-    response_gen_restate = restate_question(question, seed, state, stopping_strings, llama_index_vars)
+    response_gen_restate = restate_question(question, seed,
+                                            state, stopping_strings, llama_index_vars)
 
     # Unroll the generator
-    for question in response_gen_restate:
-        yield question
-    all_responses.append(annotate_response(question, "Restated question", header_size=2, sep_line=True, quote=True))
+    restated_question = ""
+    for restated_question in response_gen_restate:
+        yield restated_question
+    all_responses.append(annotate_response(restated_question, "Restated question", header_size=2,
+                                           sep_line=True, quote=True))
 
-    wandb_trace("HaulogyBot_Restate", original_question, question, current_span)
+    wandb_trace("HaulogyBot_Restate", question, restated_question, current_span)
 
     # Use the jira pipeline to get the first response
-    response_gen_jira = jira_pipeline(question, seed, state, stopping_strings, llama_index_vars)
+    response_gen_jira = jira_pipeline(restated_question, seed,
+                                      state, stopping_strings, llama_index_vars)
 
     # Unroll the generator
+    first_response = ""
     for first_response in response_gen_jira:
         yield first_response
-    all_responses.append(annotate_response(first_response, "Jira Pipeline", header_size=2, sep_line=True, quote=False))
+    all_responses.append(annotate_response(first_response, "Jira Pipeline", header_size=2,
+                                           sep_line=True, quote=False))
 
-    wandb_trace("HaulogyBot_Jira", question, first_response, current_span)
+    wandb_trace("HaulogyBot_Jira", restated_question, first_response, current_span)
 
     # Then, use the search tool to get the second response
-    response_gen_conf = query_confluence_index(question, seed, state, stopping_strings, llama_index_vars)
+    response_gen_conf = query_confluence_index(restated_question, seed,
+                                               state, stopping_strings, llama_index_vars)
 
     # Unroll the generator
+    second_response = ""
     for second_response in response_gen_conf:
         yield "\n".join(all_responses) + "\n" + second_response
-    all_responses.append(annotate_response(second_response, "Confluence search Tool", header_size=2, sep_line=True))
+    all_responses.append(annotate_response(second_response, "Confluence search Tool",
+                                           header_size=2, sep_line=True))
 
-    wandb_trace("HaulogyBot_Confluence", question, second_response, current_span)
+    wandb_trace("HaulogyBot_Confluence", restated_question, second_response, current_span)
 
     # Finally, compose the two responses
-    response = compose_response(question, first_response, second_response, seed, state, stopping_strings, llama_index_vars)
+    response = compose_response(restated_question, first_response,
+                                second_response, seed, state,
+                                stopping_strings, llama_index_vars)
 
     # Unroll the generator
+    final_response = ""
     for final_response in response:
         yield "\n".join(all_responses) + "\n" + final_response
 
-    wandb_trace("HaulogyBot_Compose", question, final_response, current_span)
+    wandb_trace("HaulogyBot_Compose", restated_question, final_response, current_span)
 
-    yield "\n".join(all_responses) + "\n" + annotate_response(final_response, "Final answer", header_size=1)
+    yield "\n".join(all_responses) + "\n" +\
+        annotate_response(final_response, "Final answer", header_size=1)
