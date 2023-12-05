@@ -53,6 +53,10 @@ from transformers import AutoConfig
 pytesseract.pytesseract.tesseract_cmd = r'/usr/bin/tesseract'
 
 
+VECTOR_STORE = "postgresql"
+GRAPH_STORE = "nebulagraph"
+
+
 class CustomRetriever(BaseRetriever):
     """
     Custom retriever that performs
@@ -201,10 +205,13 @@ class IndexEngine():
             documents[-1].metadata["url"] = paths
             documents[-1].metadata["title"] = paths.split("/")[-1]
 
-        reader = SimpleDirectoryReader(input_files=to_be_processed,
-                                       encoding="utf_8",
-                                       file_extractor={".jjson": JiraReader(), ".cjson": ConfluenceReader()})
-        documents += reader.load_data()
+        if len(to_be_processed) > 0:
+            print("Reading custom JSON files...")
+            reader = SimpleDirectoryReader(input_files=to_be_processed,
+                                        encoding="utf_8",
+                                        file_extractor={".jjson": JiraReader(),
+                                                        ".cjson": ConfluenceReader()})
+            documents += reader.load_data()
 
         print("Size of all documents :", sum(list(map(lambda x: len(x.text), documents))))
 
@@ -232,7 +239,7 @@ class IndexEngine():
             KeywordExtractor(keywords=10, llm=self.llm),
         ]
 
-        transformations = [node_parser] + extractors[2]  # for now we only use the entity extractor
+        transformations = [node_parser, extractors[2]]  # for now we only use the entity extractor
 
         pipeline = IngestionPipeline(transformations=transformations)
 
@@ -257,12 +264,12 @@ class IndexEngine():
         """
 
         print("Indexing into a vector store...")
-        vector_store = connect_store("postgresql", self.index_name, service_context=self.service_context)
+        vector_store = connect_store(VECTOR_STORE, self.index_name, service_context=self.service_context)
         vector_store.build_index_from_nodes(nodes=nodes)
 
         if kg:
             print("Indexing into a knowledge graph...")
-            kg_store = connect_store("nebulagraph", "llamaindex", service_context=self.service_context)
+            kg_store = connect_store(GRAPH_STORE, "llamaindex", service_context=self.service_context)
             kg_store.build_index_from_nodes(nodes=nodes)
 
     def get_retrievers(self, kg=True):
@@ -280,7 +287,7 @@ class IndexEngine():
         print("Getting vector store...")
 
         # vector_index = connect_elastic(self.index_name, service_context=self.service_context)
-        vector_index = connect_store("postgresql", self.index_name, service_context=self.service_context)
+        vector_index = connect_store(VECTOR_STORE, self.index_name, service_context=self.service_context)
 
         vec_retriever = vector_index.as_retriever(
             similarity_top_k=3,
@@ -291,7 +298,7 @@ class IndexEngine():
         if kg:
             print("Getting knowledge graph...")
             # Graph store params
-            graph_store = connect_store("nebulagraph", "llamaindex", service_context=self.service_context)
+            graph_store = connect_store(GRAPH_STORE, "llamaindex", service_context=self.service_context)
 
             kg_retriever = graph_store.as_retriever()
 
