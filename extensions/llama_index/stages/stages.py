@@ -23,11 +23,14 @@ from llama_index.schema import (
 from extensions.llama_index.llama_index_extension import BaseRetriever
 from extensions.llama_index.tools.jira_tool import JiraToolSpec, JiraQueryError
 
+PIPELINE_FAILURE = "...FAILURE"
+
 
 @dataclass
 class LlamaIndexVars():
-    """Dataclasss containing the variables needed for the pipeline"""
-    index: BaseRetriever
+    """Dataclass containing the variables needed for the pipeline"""
+    conf_index: BaseRetriever
+    jira_index: BaseRetriever
     jira_tool: JiraToolSpec
     generate_func: Callable[[str, str, int, dict, List[str]], Generator]
     current_span: Optional[Trace] = None
@@ -41,6 +44,9 @@ def annotate_response(response, title, header_size=3, sep_line=False, quote=True
     header = "#" * header_size
     separator = "\n---\n" if sep_line else "\n"
     quotation = "> " if quote else ""
+
+    if quote:
+        response = response.replace("\n", "\n> ")
 
     return f"{header} {title}\n{quotation}{response}{separator}"
 
@@ -175,7 +181,8 @@ def tool_parse(response: str, function) -> str:
         return f"FAILED: The function {function_name} was not called.\
             Make sure to include {function_name}, parentheses and the keywords in between."
 
-    arguments = arguments[0]
+    arguments = arguments[0].replace(" OR ", ",")
+    arguments = arguments.replace(" AND ", ",")
 
     # Remove if necessary the "argument = " part
 
@@ -185,10 +192,21 @@ def tool_parse(response: str, function) -> str:
     if ":" in arguments:
         arguments = arguments.split(":")[1]
 
+    if " ~ " in arguments:
+        arguments = arguments.split("~")[1]
+
     # Remove the quotes if necessary
 
     arguments = arguments.replace("'", "")
     arguments = arguments.replace('"', "")
+
+    # start at the first letter
+    first_letter = re.search(r"[a-zA-Z0-9]", arguments)
+    if first_letter is not None:
+        arguments = arguments[first_letter.start():]
+    else:
+        return f"FAILED: The function {function_name} was called with\
+            arguments {arguments} but no keyword was found."
 
     # Finally, trim the arguments
     arguments = arguments.strip()
@@ -205,7 +223,7 @@ def chunk_detail(context: str, question, seed: int,
                  gen: Callable[[str, str, int, dict, List[str]], Generator]):
     """
     In this stage, we will post-process the retrieved context so that it can enter in the LLM.
-    To do this, we will pass a rolling window of 4096 characters to create summaries of the context.
+    To do this, we will pass a rolling window to create summaries of the context.
 
     All the summaries will be concatenated together to provide a final context.
     """
@@ -259,11 +277,24 @@ def jira_pipeline(question: str, seed: int, state: dict,
     # Parse the response and call the tool
     issues = tool_parse(response, query_function)
 
-    wandb_trace("HaulogyBot_Jira_Query_Parse", response, issues, current_span)
+    parse_trace = wandb_trace("HaulogyBot_Jira_Query_Parse", response, issues, current_span)
 
+    if issues.startswith("FAILED"):
+        # attempt to rescue the search by changing the query
+        # for this we broaden the search by relaxing keywords with or
+        all_responses.append("[DEBUG] The Jira search tool failed to find an issue.\
+            Attempting to rescue the search by relaxing the keywords.\n")
+        issues = tool_parse(response.replace(" ", ","), query_function)
+
+        wandb_trace("HaulogyBot_Jira_Query_Parse_Rescue", response, issues, parse_trace)
+
+    # considered unrecoverable at this point
     if issues.startswith("FAILED") or issues.startswith("ERROR"):
-        yield "\n".join(all_responses) + "\n" + issues
+        yield "\n".join(all_responses) + "\n" + issues + PIPELINE_FAILURE
         return
+
+    all_responses.append(annotate_response(issues, "Jira Query Result", header_size=3,
+                                           sep_line=False, quote=True))
 
     # Then, detail an issue
     query_function_detail = llama_index_vars.jira_tool.detail_issue
@@ -274,9 +305,7 @@ def jira_pipeline(question: str, seed: int, state: dict,
     for ans in response:
         yield "\n".join(all_responses) + "\n" + ans
     response = ans
-    state["jira_metadata"] = "Issue queried:\n> " +\
-        ans + "\nCandidate issues:\n> " +\
-            issues.replace("\n", "\n>") + "\n"
+
     all_responses.append(annotate_response(response, "Jira Detail"))
 
     wandb_trace("HaulogyBot_Jira_Detail", question, response, current_span)
@@ -287,7 +316,7 @@ def jira_pipeline(question: str, seed: int, state: dict,
     wandb_trace("HaulogyBot_Jira_Detail_Parse", response, context, current_span)
 
     if context.startswith("FAILED") or context.startswith("ERROR"):
-        yield "\n".join(all_responses) + "\n" + context
+        yield "\n".join(all_responses) + "\n" + context + PIPELINE_FAILURE
         return
 
     # create a span for the summarize stage
@@ -298,7 +327,7 @@ def jira_pipeline(question: str, seed: int, state: dict,
     # Chunkify the context using a rolling window of 4096 characters
     # Do this until the result fits in 4096 characters
     last_pass = False
-    length_skip = 10000
+    length_skip = 8000
     while not last_pass:
         if len(context) <= length_skip:
             last_pass = True
@@ -328,20 +357,24 @@ def jira_pipeline(question: str, seed: int, state: dict,
     yield "\n".join(all_responses) + "\n" + annotate_response(context, "Jira Summary")
 
 
-def query_confluence_index(question: str, seed: int, state: dict,
+def query_index(question: str, seed: int, state: dict,
                            stopping_strings: List[str],
+                           index: BaseRetriever,
                            llama_index_vars: LlamaIndexVars):
     """
     In this stage, we will use standard retrieval to retrieve the most
     relevant documents and get a response from the LLM.
     """
 
-    resp = llama_index_vars.index.retrieve(question)
+    resp = index.retrieve(question)
 
     context = "\n\n".join([x.get_content(metadata_mode=MetadataMode.NONE)
                             for x in resp])
 
-    state['index_metadata'] = get_meta_if_possible(resp)
+    if "index_metadata" not in state.keys():
+        state['index_metadata'] = []
+
+    state['index_metadata'].append(get_meta_if_possible(resp))
 
     prompt = (
         "System:\n"
@@ -360,8 +393,7 @@ def query_confluence_index(question: str, seed: int, state: dict,
     return llama_index_vars.generate_func(prompt, prompt, seed, state, stopping_strings)
 
 
-def compose_response(question: str, first_response: str,
-                     second_response: str, seed: int, state: dict,
+def compose_response(question: str, responses: List[str], seed: int, state: dict,
                      stopping_strings: List[str],
                      llama_index_vars: LlamaIndexVars):
     """
@@ -372,21 +404,14 @@ def compose_response(question: str, first_response: str,
     prompt = (
         "System:\n"
         "You (HaulogyBot) are a helpful chatbot that answers questions about Haulogy.\n"
-        "The first response using the Jira tool is below:\n"
-        "```\n"
-        "{first_response}\n"
-        "```\n"
-        "The second response using the search tool is below:\n"
-        "```\n"
-        "{second_response}\n"
-        "```\n"
-        "Given the information from the two responses, answer the query.\n"
+        "Here follows a list of potential responses to the query from different sources:\n"
+        "{responses}\n"
+        "Given the information above, answer the query.\n"
         "Query: {question}\n"
         "HaulogyBot:\n"
     )
 
-    prompt = prompt.format(first_response=first_response,
-                           second_response=second_response, question=question)
+    prompt = prompt.format(responses=responses, question=question)
 
     return llama_index_vars.generate_func(prompt, prompt,
                                           seed, state, stopping_strings)
@@ -405,6 +430,8 @@ def restate_question(question: str, seed: int, state: dict,
         "Given the chat history above, \
             restate the last user's question in a single sentence.'\n"
         "Keep the question brief. It should not be longer than 50 words.\n"
+        "If the question is in another language, \
+            please do not translate it and keep it in the original language.\n"
         "HaulogyBot:\n"
     )
 
@@ -424,6 +451,8 @@ def wandb_trace(name: str, inputs: str, outputs: str, parent: Trace | None):
     if parent is not None:
         parent.add_child(conf_jira_span)
 
+    return conf_jira_span
+
 
 def conf_jira_pipeline(question: str, seed: int, state: dict,
                        stopping_strings: List[str],
@@ -435,6 +464,7 @@ def conf_jira_pipeline(question: str, seed: int, state: dict,
 
     # Initialize the variables
     all_responses = []
+    to_summarize = []
     current_span = llama_index_vars.current_span
 
     # First, restate the question
@@ -459,26 +489,50 @@ def conf_jira_pipeline(question: str, seed: int, state: dict,
     for first_response in response_gen_jira:
         yield first_response
     all_responses.append(annotate_response(first_response, "Jira Pipeline", header_size=2,
-                                           sep_line=True, quote=False))
+                                           sep_line=False, quote=False))
+
+    to_summarize.append(first_response)
 
     wandb_trace("HaulogyBot_Jira", restated_question, first_response, current_span)
 
-    # Then, use the search tool to get the second response
-    response_gen_conf = query_confluence_index(restated_question, seed,
-                                               state, stopping_strings, llama_index_vars)
+    # Use the search tool to get the second response
+    jira_index = llama_index_vars.jira_index
+    response_gen_search = query_index(restated_question, seed,
+                                    state, stopping_strings,
+                                    jira_index,
+                                    llama_index_vars)
 
     # Unroll the generator
-    second_response = ""
-    for second_response in response_gen_conf:
-        yield "\n".join(all_responses) + "\n" + second_response
-    all_responses.append(annotate_response(second_response, "Confluence search Tool",
+    jira_sim_response = ""
+    for jira_sim_response in response_gen_search:
+        yield "\n".join(all_responses) + "\n" + jira_sim_response
+    all_responses.append(annotate_response(jira_sim_response, "Jira Similarity Search Tool",
+                                        header_size=3, sep_line=True))
+
+    to_summarize.append(jira_sim_response)
+
+    wandb_trace("HaulogyBot_Jira_Sim_Search", restated_question, jira_sim_response, current_span)
+
+    # Then, use the confluence search tool to have the third response
+    conf_index = llama_index_vars.conf_index
+    response_gen_conf = query_index(restated_question, seed,
+                                               state, stopping_strings,
+                                               conf_index,
+                                               llama_index_vars)
+
+    # Unroll the generator
+    third_response = ""
+    for third_response in response_gen_conf:
+        yield "\n".join(all_responses) + "\n" + third_response
+    all_responses.append(annotate_response(third_response, "Confluence search Tool",
                                            header_size=2, sep_line=True))
 
-    wandb_trace("HaulogyBot_Confluence", restated_question, second_response, current_span)
+    to_summarize.append(third_response)
+
+    wandb_trace("HaulogyBot_Confluence", restated_question, third_response, current_span)
 
     # Finally, compose the two responses
-    response = compose_response(restated_question, first_response,
-                                second_response, seed, state,
+    response = compose_response(restated_question, to_summarize, seed, state,
                                 stopping_strings, llama_index_vars)
 
     # Unroll the generator

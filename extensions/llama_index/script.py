@@ -22,8 +22,13 @@ from extensions.llama_index.stages.stages import LlamaIndexVars, conf_jira_pipel
 global LLAMA_INDEX_VARS
 LLAMA_INDEX_VARS = None
 
-DATASET = "conf_custo_embed"
-INDEX_NAME = "conf_custo_embed_entity"
+CONF_DATASET = "conf_3_12_2023"
+CONF_INDEX_NAME = "conf_entity"
+
+JIRA_DATASET = "jira_3_12_2023"
+JIRA_INDEX_NAME = "jira_entity"
+
+WANDB_LOG = True
 
 
 def setup():
@@ -34,18 +39,38 @@ def setup():
     nest_asyncio.apply()
 
     # TODO: Change when go to production
-    wandb.init(project="Haulogy-First-Test")
+    if WANDB_LOG:
+        wandb.init(project="Haulogy-First-Test")
 
-    index = IndexEngine(index_name=INDEX_NAME, dataset=DATASET).as_retriever(kg=False,
-                                            fine_tune=False,
-                                            build_index=False)
+    # Initialize the index engine so that a maximum of models are shared
+    index = IndexEngine()
+
+    confluence_retriever = index.as_retriever(
+                                              index_name=CONF_INDEX_NAME,
+                                              dataset=CONF_DATASET,
+                                              kg=False,
+                                              fine_tune=False,
+                                              build_index=False
+                                            )
+
+    jira_retriever = index.as_retriever(
+                                              index_name=JIRA_INDEX_NAME,
+                                              dataset=JIRA_DATASET,
+                                              kg=False,
+                                              fine_tune=False,
+                                              build_index=False
+                                            )
 
     jira_tool = JiraToolSpec()
 
     generate_func = get_generate_func()
 
     global LLAMA_INDEX_VARS
-    LLAMA_INDEX_VARS = LlamaIndexVars(index=index, jira_tool=jira_tool, generate_func=generate_func)
+    LLAMA_INDEX_VARS = LlamaIndexVars(conf_index=confluence_retriever,
+                                      jira_index=jira_retriever,
+                                      jira_tool=jira_tool,
+                                      generate_func=generate_func
+                                      )
 
 
 def output_modifier(output: str, state: dict, is_chat=False):
@@ -62,11 +87,12 @@ def output_modifier(output: str, state: dict, is_chat=False):
     Returns:
         _type_: _description_
     """
-    output = output + "\nSources : \n\n"
+
     if "index_metadata" in state.keys():
-        output = output + state["index_metadata"]
-    if "jira_metadata" in state.keys():
-        output = output + state["jira_metadata"]
+        output = output + "\nSources : \n\n"
+        for metadata in state["index_metadata"]:
+            output = output + metadata
+        state["index_metadata"] = []
 
     return output
 
@@ -122,7 +148,7 @@ def custom_generate_reply(*args, **kwargs):
             metadata={"error": "",
                     "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     "model_name": shared.model_name,
-                    "dataset": DATASET,
+                    "llama_index_vars": LLAMA_INDEX_VARS,
                     "config": shared.model_config})
 
     LLAMA_INDEX_VARS.current_span = llm_span
@@ -149,4 +175,6 @@ def custom_generate_reply(*args, **kwargs):
                            "history": question}
         llm_span.end_time_ms = end_time_ms
         llm_span.outputs = {"response": ans}
-        llm_span.log(name="HaulogyBot_Jira_Conf")
+
+        if WANDB_LOG:
+            llm_span.log(name="HaulogyBot_Jira_Conf")

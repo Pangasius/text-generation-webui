@@ -103,7 +103,7 @@ class IndexEngine():
     This class is used to index documents and retrieve them.
     It will interact with a vector store and can also interact with a knowledge graph.
     """
-    def __init__(self, index_name: str, dataset: str | None = None, embed_model="local:BAAI/bge-large-en-v1.5"):
+    def __init__(self, embed_model="local:BAAI/bge-large-en-v1.5"):
         print("Loading model...")
 
         path_to_model = Path(f'{shared.args.model_dir}/{shared.model_name}')
@@ -111,9 +111,6 @@ class IndexEngine():
 
         config = AutoConfig.from_pretrained(path_to_model)
         tokenizer_config = json.load(open(path_to_tokenizer, "r"))
-
-        print("Config loaded : ", config)
-        print("Tokenizer config loaded : ", tokenizer_config)
 
         llm = HuggingFaceLLM(model=shared.model,
                              model_name=shared.model_name,
@@ -128,12 +125,9 @@ class IndexEngine():
         print("Context window:", shared.args.n_ctx)
 
         self.llm = llm
-        self.index_name = index_name
 
-        if dataset is None:
-            self.dataset = index_name
-        else:
-            self.dataset = dataset
+        self.index_name = None
+        self.dataset = None
 
         self._load_embedding_model(embed_model)
 
@@ -147,7 +141,7 @@ class IndexEngine():
         Args:
             embed_model (str): The name of the embedding model
         """
-        if embed_model.startswith("custom:"):
+        if isinstance(embed_model, str) and embed_model.startswith("custom:"):
             self.embed_model = AdapterEmbeddingModel(
                 resolve_embed_model(self.embed_model),
                 embed_model[7:],
@@ -190,6 +184,9 @@ class IndexEngine():
 
         to_be_processed = []
         documents = []
+
+        if self.dataset is None:
+            raise Exception("The dataset has not been set.")
 
         print("Reading documents...")
         for paths in tqdm(glob.glob("./examples/" + self.dataset + "/**/*.*", recursive=True)):
@@ -263,6 +260,9 @@ class IndexEngine():
                                  Defaults to False.
         """
 
+        if self.index_name is None:
+            raise Exception("The index name has not been set.")
+
         print("Indexing into a vector store...")
         vector_store = connect_store(VECTOR_STORE, self.index_name, service_context=self.service_context)
         vector_store.build_index_from_nodes(nodes=nodes)
@@ -285,6 +285,9 @@ class IndexEngine():
         """
 
         print("Getting vector store...")
+
+        if self.index_name is None:
+            raise Exception("The index name has not been set.")
 
         # vector_index = connect_elastic(self.index_name, service_context=self.service_context)
         vector_index = connect_store(VECTOR_STORE, self.index_name, service_context=self.service_context)
@@ -360,7 +363,7 @@ class IndexEngine():
 
         self.embed_model = finetune_engine.get_finetuned_model(adapter_cls=TwoLayerNN, device="cuda:0")
 
-    def as_retriever(self,
+    def as_retriever(self, dataset: str, index_name: str,
                      kg=False, fine_tune=False,
                      build_index=False):
         """
@@ -378,6 +381,9 @@ class IndexEngine():
         Returns:
             BaseRetriever: The retriever
         """
+
+        self.dataset = dataset
+        self.index_name = index_name
 
         print("Loading engine...")
         if build_index:

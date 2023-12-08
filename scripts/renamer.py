@@ -18,15 +18,15 @@ def rename_file(file, extension):
 
 def rename_files():
     counters = {"jjson": 0, "cjson": 0, "skipped": 0, "skipped_json": 0}
-    for file in tqdm(glob("examples/f_embed_raw/**/*", recursive=True)):
+    for file in tqdm(glob("examples/**/*", recursive=True)):
         if not file.endswith(".json"):
             counters["skipped"] += 1
             continue
 
-        if file.__contains__("/jira_f/"):
+        if file.__contains__("/jira"):
             print("Renaming file", file, "to", rename_file(file, ".jjson")) if DEBUG else os.rename(file, rename_file(file, ".jjson"))
             counters["jjson"] += 1
-        elif file.__contains__("/conf_f_embed/"):
+        elif file.__contains__("/conf"):
             print("Renaming file", file, "to", rename_file(file, ".cjson")) if DEBUG else os.rename(file, rename_file(file, ".cjson"))
             counters["cjson"] += 1
         else:

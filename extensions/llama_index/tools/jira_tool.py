@@ -146,26 +146,22 @@ class JiraToolSpec():
 
         # Get the description and comments
 
+        to_return = None
         if isinstance(issue_requested, str):
-            description = ""
             comments = {}
             for issue in self.last_results:
                 if issue["key"] == issue_requested:
-                    description = issue["fields"]["description"]
-                    comments = issue["fields"]["comment"]["comments"]
-                    break
+                    to_return = issue
         else:
             return f"FAILED: The issue requested must be a string, not {type(issue_requested)}"
 
-        if description == "":
+        if to_return is None:
             return f"FAILED: Issue {issue_requested} not found. \
                 Available issues are: {', '.join([issue['key'] for issue in self.last_results])}"
 
         # Format the result
-        self.last_results = "Description: " + description + "\n"
-        self.last_results += "Comments:\n"
-        for comment in comments:
-            self.last_results += comment["body"] + "\n"
+
+        self.last_results = json.dumps(to_return, indent=4, sort_keys=True)
 
         # Here we have to print or the variable is not saved
         print(self.last_results)

@@ -85,6 +85,11 @@ class JiraReader(BaseReader):
         metadata = {}
 
         for key in ("id", "key", "date", "type", "resolution", "status", "versions"):
+            if key == "resolution" and "resolution" in j and j["resolution"] and "name" in j["resolution"]:
+                metadata["resolution"] = j["resolution"]["name"]
+            elif key == "resolution":
+                continue
+
             metadata[key] = j[key]
 
         content = {}
