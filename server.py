@@ -3,6 +3,7 @@ import yaml
 import warnings
 
 import json
+import signal
 import sys
 import time
 from functools import partial
@@ -51,6 +52,17 @@ warnings.filterwarnings('ignore', category=UserWarning, message='Using the updat
 warnings.filterwarnings('ignore', category=UserWarning, message='Field "model_name" has conflict')
 
 matplotlib.use('Agg')  # This fixes LaTeX rendering on some systems
+
+
+def signal_handler(sig, frame):
+    logger.info("Received Ctrl+C. Shutting down Text generation web UI gracefully.")
+    if 'interface' in shared.gradio:
+        shared.gradio['interface'].close()
+
+    sys.exit(0)
+
+
+signal.signal(signal.SIGINT, signal_handler)
 
 
 def create_interface():
