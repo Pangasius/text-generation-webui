@@ -54,8 +54,9 @@ settings = {
     'stream': True,
     'character': 'Assistant',
     'name1': 'You',
-    'instruction_template': 'Alpaca',
     'custom_system_message': '',
+    'instruction_template_str': "{%- set ns = namespace(found=false) -%}\n{%- for message in messages -%}\n    {%- if message['role'] == 'system' -%}\n        {%- set ns.found = true -%}\n    {%- endif -%}\n{%- endfor -%}\n{%- if not ns.found -%}\n    {{- '' + 'Below is an instruction that describes a task. Write a response that appropriately completes the request.' + '\\n\\n' -}}\n{%- endif %}\n{%- for message in messages %}\n    {%- if message['role'] == 'system' -%}\n        {{- '' + message['content'] + '\\n\\n' -}}\n    {%- else -%}\n        {%- if message['role'] == 'user' -%}\n            {{-'### Instruction:\\n' + message['content'] + '\\n\\n'-}}\n        {%- else -%}\n            {{-'### Response:\\n' + message['content'] + '\\n\\n' -}}\n        {%- endif -%}\n    {%- endif -%}\n{%- endfor -%}\n{%- if add_generation_prompt -%}\n    {{-'### Response:\\n'-}}\n{%- endif -%}",
+    'chat_template_str': "{%- for message in messages %}\n    {%- if message['role'] == 'system' -%}\n        {{- message['content'] + '\\n\\n' -}}\n    {%- else -%}\n        {%- if message['role'] == 'user' -%}\n            {{- name1 + ': ' + message['content'] + '\\n'-}}\n        {%- else -%}\n            {{- name2 + ': ' + message['content'] + '\\n' -}}\n        {%- endif -%}\n    {%- endif -%}\n{%- endfor -%}",
     'chat-instruct_command': 'Continue the chat dialogue below. Write a single reply for the character "<|character|>".\n\n<|prompt|>',
     'autoload_model': False,
     'gallery-items_per_page': 50,
@@ -79,7 +80,7 @@ parser.add_argument('--verbose', action='store_true', help='Print the prompts to
 parser.add_argument('--chat-buttons', action='store_true', help='Show buttons on the chat tab instead of a hover menu.')
 
 # Model loader
-parser.add_argument('--loader', type=str, help='Choose the model loader manually, otherwise, it will get autodetected. Valid options: Transformers, llama.cpp, llamacpp_HF, ExLlama_HF, ExLlamav2_HF, AutoGPTQ, AutoAWQ, GPTQ-for-LLaMa, ExLlama, ExLlamav2, ctransformers.')
+parser.add_argument('--loader', type=str, help='Choose the model loader manually, otherwise, it will get autodetected. Valid options: Transformers, llama.cpp, llamacpp_HF, ExLlama_HF, ExLlamav2_HF, AutoGPTQ, AutoAWQ, GPTQ-for-LLaMa, ExLlama, ExLlamav2, ctransformers, QuIP#.')
 
 # Accelerate/transformers
 parser.add_argument('--cpu', action='store_true', help='Use the CPU to generate text. Warning: Training on CPU is extremely slow.')
@@ -124,6 +125,7 @@ parser.add_argument('--max_seq_len', type=int, default=2048, help='Maximum seque
 parser.add_argument('--cfg-cache', action='store_true', help='ExLlama_HF: Create an additional cache for CFG negative prompts. Necessary to use CFG with that loader, but not necessary for CFG with base ExLlama.')
 parser.add_argument('--no_flash_attn', action='store_true', help='Force flash-attention to not be used.')
 parser.add_argument('--cache_8bit', action='store_true', help='Use 8-bit cache to save VRAM.')
+parser.add_argument('--num_experts_per_token', type=int, default=2, help='Number of experts to use for generation. Applies to MoE models like Mixtral.')
 
 # AutoGPTQ
 parser.add_argument('--triton', action='store_true', help='Use triton.')
@@ -132,6 +134,7 @@ parser.add_argument('--no_inject_fused_mlp', action='store_true', help='Triton m
 parser.add_argument('--no_use_cuda_fp16', action='store_true', help='This can make models faster on some systems.')
 parser.add_argument('--desc_act', action='store_true', help='For models that do not have a quantize_config.json, this parameter is used to define whether to set desc_act or not in BaseQuantizeConfig.')
 parser.add_argument('--disable_exllama', action='store_true', help='Disable ExLlama kernel, which can improve inference speed on some systems.')
+parser.add_argument('--disable_exllamav2', action='store_true', help='Disable ExLlamav2 kernel.')
 
 # GPTQ-for-LLaMa
 parser.add_argument('--wbits', type=int, default=0, help='Load a pre-quantized model with specified precision in bits. 2, 3, 4 and 8 are supported.')
@@ -140,6 +143,9 @@ parser.add_argument('--groupsize', type=int, default=-1, help='Group size.')
 parser.add_argument('--pre_layer', type=int, nargs='+', help='The number of layers to allocate to the GPU. Setting this parameter enables CPU offloading for 4-bit models. For multi-gpu, write the numbers separated by spaces, eg --pre_layer 30 60.')
 parser.add_argument('--checkpoint', type=str, help='The path to the quantized checkpoint file. If not specified, it will be automatically detected.')
 parser.add_argument('--monkey-patch', action='store_true', help='Apply the monkey patch for using LoRAs with quantized models.')
+
+# HQQ
+parser.add_argument('--hqq-backend', type=str, default='PYTORCH_COMPILE', help='Backend for the HQQ loader. Valid options: PYTORCH, PYTORCH_COMPILE, ATEN.')
 
 # DeepSpeed
 parser.add_argument('--deepspeed', action='store_true', help='Enable the use of DeepSpeed ZeRO-3 for inference via the Transformers integration.')
@@ -249,6 +255,8 @@ def fix_loader_name(name):
         return 'AutoAWQ'
     elif name in ['quip#', 'quip-sharp', 'quipsharp', 'quip_sharp']:
         return 'QuIP#'
+    elif name in ['hqq']:
+        return 'HQQ'
 
 
 def add_extension(name, last=False):
