@@ -23,7 +23,43 @@ from llama_index.schema import (
 from extensions.llama_index.llama_index_extension import BaseRetriever
 from extensions.llama_index.tools.jira_tool import JiraToolSpec, JiraQueryError
 
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+
+from modules import shared
+
+from llama_index.node_parser import TokenTextSplitter
+
+from modules.text_generation import get_encoded_length
+
+from modules.logits import get_next_logits
+
 PIPELINE_FAILURE = "...FAILURE"
+
+
+class Summarizer:
+    def __init__(self):
+
+        self.tokenizer = AutoTokenizer.from_pretrained("facebook/bart-large-xsum", use_fast=True)
+
+        self.model = AutoModelForSeq2SeqLM.from_pretrained("facebook/bart-large-xsum")
+
+    def summarize_all(self, texts: List[str]) -> List[str]:
+        print([len(x) for x in texts])
+
+        # summarize by batch
+        summaries = []
+        last_pass = False
+        for i in range(0, len(texts), 2):
+            input_ids = self.tokenizer(texts[i:i + 2], return_tensors="pt", padding=True).input_ids.to("cuda:0")
+
+            summary_ids = self.model.generate(input_ids, max_length=256, early_stopping=True, min_length=min(len(texts[i]), 64))
+
+            if i + 4 >= len(texts):
+                last_pass = True
+
+            summaries.extend([self.tokenizer.decode(g, skip_special_tokens=True, clean_up_tokenization_spaces=last_pass) for g in summary_ids])
+
+        return summaries
 
 
 @dataclass
@@ -33,6 +69,7 @@ class LlamaIndexVars():
     jira_index: BaseRetriever
     jira_tool: JiraToolSpec
     generate_func: Callable[[str, str, int, dict, List[str]], Generator]
+    summarizer: Summarizer
     current_span: Optional[Trace] = None
 
 
@@ -87,9 +124,14 @@ def get_meta_if_possible(nodes: List[NodeWithScore]) -> str:
     return info
 
 
-def desc_and_template(question, function, additional=""):
+def query_jira_issue(question: str, seed: int, state: dict,
+                     stopping_strings: List[str], function,
+                     gen: Callable[[str, str, int, dict, List[str]], Generator]):
     """
-    Generates a prompt in which a python function is called with the given question.
+    In this first stage, we will let the LLM use the first functionality of the Jira tool:
+    - Query Jira for issues
+
+    This function return a string containing a modified question to fulfill that purpose.
     """
 
     args = function.__annotations__  # Get the arguments of the function
@@ -110,58 +152,15 @@ def desc_and_template(question, function, additional=""):
             You can access with one line commands special tools such as the Jira search tool.\n"
         "Task:\n"
         "Given the following function description:\n"
-        "```\n"
         "{doc}\n"
-        "```\n"
         "And the following request:\n"
-        "```\n"
         "{question}\n"
-        "```\n"
-        "{additional}"
         "Call the function with the correct arguments in one line of Python code.\n"
-        "It is imperative your answer must only contain the described \
-            function and its arguments without any text.\n"
         "HaulogyBot:\n"
         "{function_name}"
     )
 
-    return prompt_template.format(doc=function_description, question=question,
-                                  additional=additional, function_name=function.__name__)
-
-
-def query_jira_issue(question: str, seed: int, state: dict,
-                     stopping_strings: List[str], function,
-                     gen: Callable[[str, str, int, dict, List[str]], Generator]):
-    """
-    In this first stage, we will let the LLM use the first functionality of the Jira tool:
-    - Query Jira for issues
-
-    This function return a string containing a modified question to fulfill that purpose.
-    """
-
-    prompt = desc_and_template(question, function)
-
-    return gen(prompt, prompt, seed, state, stopping_strings)
-
-
-def query_jira_detail(question: str, issues: str, seed: int,
-                      state: dict, stopping_strings: List[str],
-                      function, gen: Callable[[str, str, int, dict, List[str]], Generator]):
-    """
-    In ths stage, we will let the LLM use the second functionality of the Jira tool:
-    - Detail an issue
-
-    This function return a string containing a modified question to fulfill that purpose.
-    """
-
-    additional_prompt = (
-        "This is the list of issues returned by the Jira tool:\n"
-        "```\n"
-        f"{issues}\n"
-        "```\n"
-    )
-
-    prompt = desc_and_template(question, function, additional=additional_prompt)
+    prompt = prompt_template.format(doc=function_description, question=question, function_name=function.__name__)
 
     return gen(prompt, prompt, seed, state, stopping_strings)
 
@@ -218,31 +217,83 @@ def tool_parse(response: str, function) -> str:
             arguments {arguments} but failed with the following error: {e}"
 
 
-def chunk_detail(context: str, question, seed: int,
-                 state: dict, stopping_strings: List[str],
-                 gen: Callable[[str, str, int, dict, List[str]], Generator]):
+def summarize_contexts(contexts: List[str], summarizer: Summarizer):
     """
-    In this stage, we will post-process the retrieved context so that it can enter in the LLM.
-    To do this, we will pass a rolling window to create summaries of the context.
+    Summarizes the contexts using the summarizer.
 
-    All the summaries will be concatenated together to provide a final context.
+    Args:
+        contexts (List[str]): A list of contexts to summarize
+        summarizer (Summarizer): The summarizer to use
+        all_responses (List[str]): The incremental list of responses
+    """
+
+    # cause hf tokenizer not directly compatible with llama_index
+    def new_tokenizer(x: str):
+        return summarizer.tokenizer.encode(x)
+
+    summarizer.model.to("cuda:0")
+
+    for context, index in zip(contexts, range(len(contexts))):
+        # Use the summarizer to get the final context
+        last_pass = False
+        splitter = TokenTextSplitter(tokenizer=new_tokenizer, chunk_size=1024, chunk_overlap=64)
+
+        while not last_pass:
+            if get_encoded_length(context) < shared.args.n_ctx:
+                last_pass = True
+
+            summary = "\n".join(summarizer.summarize_all(splitter.split_text(context)))
+
+            context = summary
+
+        contexts[index] = context
+
+    summarizer.model.to("cpu")
+
+
+def determine_usefulness(context: str, question: str, state: dict, all_responses: List[str]):
+    """
+    Determines if the context is useful for the question.
+
+    Args:
+        context (str): The context to check
+        question (str): The question to check
+
+    Returns:
+        useful (bool): True if the context is useful, False otherwise
     """
 
     prompt = (
-        "Context:\n"
-        "```\n"
+        "Here follows a summary:\n"
         "{context}\n"
-        "```\n"
-        "Above is a portion of text you must summarize so that\
-            you keep all the information needed to answer the query.\n"
-        "Query: {question}\n"
-        "Do not include any outside information in your answer.\n"
-        "HaulogyBot:\n"
+        "And a question, that may or may not be related:\n"
+        "{question}\n"
+        "Can the query be answered with the summary? (Yes/No) \n"
+        "Answer:\n"
     )
 
-    prompt = prompt.format(question=question, context=context)
+    # here we will determine the answer based on the logits of the LLM
+    logits = get_next_logits(prompt.format(context=context, question=question), state, use_samplers=False, previous=None, return_dict=True)
 
-    return gen(prompt, prompt, seed, state, stopping_strings)
+    # checks to remove uncertainty about the type of the output
+    assert isinstance(logits, dict)
+    assert "Yes" in logits.keys()
+    assert "No" in logits.keys()
+
+    # get the logits for yes and no
+    yes_logits = logits["Yes"]
+    no_logits = logits["No"]
+
+    emoji = "👍" if yes_logits > no_logits else "👎"
+
+    log_text = f"The logits for **yes** are {yes_logits} and the logits for **no** are {no_logits} concerning the relevance of the context:\n {context}.\
+        \nAre you sure the context is relevant? {emoji}"
+
+    all_responses.append(annotate_response(log_text, "Logits", header_size=3,
+                                           sep_line=False, quote=True))
+
+    # if the logits for yes are higher than the logits for no, then the answer is yes
+    return yes_logits > no_logits
 
 
 def jira_pipeline(question: str, seed: int, state: dict,
@@ -269,6 +320,7 @@ def jira_pipeline(question: str, seed: int, state: dict,
     # Unroll the generator
     for ans in response:
         yield ans
+
     response = ans
     all_responses.append(annotate_response(response, "Jira Query"))
 
@@ -296,65 +348,73 @@ def jira_pipeline(question: str, seed: int, state: dict,
     all_responses.append(annotate_response(issues, "Jira Query Result", header_size=3,
                                            sep_line=False, quote=True))
 
-    # Then, detail an issue
-    query_function_detail = llama_index_vars.jira_tool.detail_issue
-    response = query_jira_detail(question, issues, seed, state,
-                                 stopping_strings, query_function_detail, gen)
+    # Make a quick filtering of issues based on the question
+    issues = llama_index_vars.jira_tool.filter_out_issues(filter=lambda x: determine_usefulness(x, question, state, all_responses))
 
-    # Unroll the generator
-    for ans in response:
-        yield "\n".join(all_responses) + "\n" + ans
-    response = ans
-
-    all_responses.append(annotate_response(response, "Jira Detail"))
-
-    wandb_trace("HaulogyBot_Jira_Detail", question, response, current_span)
-
-    # Parse the response and call the tool
-    context = tool_parse(response, query_function_detail)
-
-    wandb_trace("HaulogyBot_Jira_Detail_Parse", response, context, current_span)
-
-    if context.startswith("FAILED") or context.startswith("ERROR"):
-        yield "\n".join(all_responses) + "\n" + context + PIPELINE_FAILURE
+    # In case there is no issue left, we stop the pipeline
+    if len(issues) == 0:
+        yield "\n".join(all_responses) + "\n" + "No relevant issue found." + PIPELINE_FAILURE
         return
 
-    # create a span for the summarize stage
-    summarize_span = Trace(
-        name="Summarize",
+    # Then, we detail the issues
+    yield "\n".join(all_responses) + "Summarizing issues..."
+
+    # here the issues are concatenated and passed to be summarized
+    contexts = llama_index_vars.jira_tool.get_all_issues_details(issues)
+
+    # summarize the contexts
+    summarize_contexts(contexts, llama_index_vars.summarizer)
+
+    # filter out irrelevant contexts
+    contexts = [context for context in contexts if determine_usefulness(context, question, state, all_responses)]
+
+    if len(contexts) == 0:
+        yield "\n".join(all_responses) + "\n" + "No relevant context found." + PIPELINE_FAILURE
+        return
+
+    for context, index in zip(contexts, range(len(contexts))):
+        response_gen = in_context_response(context, question, seed, state, stopping_strings, llama_index_vars)
+
+        # Unroll the generator
+        response = ""
+        for response in response_gen:
+            yield "\n".join(all_responses) + "\n" + response
+
+        all_responses.append(annotate_response(response, f"Jira Context {index}", header_size=3,
+                                               sep_line=False, quote=True))
+
+        yield "\n".join(all_responses)
+
+        contexts[index] = context
+
+    # Finally, compose the answer by summarizing all responses
+    summarize_contexts(contexts=["\n".join(contexts)], summarizer=llama_index_vars.summarizer)
+
+    all_responses.append(annotate_response(contexts[0], "Jira Final Answer", header_size=3,
+                                           sep_line=False, quote=True))
+
+    yield "\n".join(all_responses) + "\n" + contexts[0]
+
+
+def in_context_response(context: str, question: str, seed: int, state: dict,
+                 stopping_strings: List[str],
+                 llama_index_vars: LlamaIndexVars):
+    """A simple prompt to use retrieved documents to answer a question."""
+
+    prompt = (
+        "System:\n"
+        "You (HaulogyBot) are a helpful chatbot that can answer Haulogy related questions thanks to summaries.\n"
+        "The retrieved documents are below:\n"
+        "{context}\n"
+        "Given the information from the retrieved documents, answer the query below:\n"
+        "{question}\n"
+        "If no answer can be found, answer with 'UNRELATED'.\n"
+        "HaulogyBot:\n"
     )
 
-    # Chunkify the context using a rolling window of 4096 characters
-    # Do this until the result fits in 4096 characters
-    last_pass = False
-    length_skip = 8000
-    while not last_pass:
-        if len(context) <= length_skip:
-            last_pass = True
+    prompt = prompt.format(context=context, question=question)
 
-        answers = []
-        for start in range(0, len(context), length_skip):
-            end = min(start + length_skip, len(context))
-            response = chunk_detail(context[start:end], question,
-                                    seed, state, stopping_strings, gen)
-
-            # Unroll the generator
-            for ans in response:
-                yield "\n".join(all_responses) + "\n" + ans
-            answers.append(ans)
-            all_responses.append(annotate_response(ans, "Jira Chunk"))
-
-            wandb_trace(f"HaulogyBot_Jira_Chunk_{start}_{end}", context[start:end],
-                        ans, summarize_span)
-
-        context = "\n".join(answers)
-        all_responses = all_responses[:-len(answers)]
-
-    if current_span is not None:
-        current_span.add_child(summarize_span)
-
-    # Return the final context, which is supposed to be the final summary
-    yield "\n".join(all_responses) + "\n" + annotate_response(context, "Jira Summary")
+    return llama_index_vars.generate_func(prompt, prompt, seed, state, stopping_strings)
 
 
 def query_index(question: str, seed: int, state: dict,
@@ -376,21 +436,9 @@ def query_index(question: str, seed: int, state: dict,
 
     state['index_metadata'].append(get_meta_if_possible(resp))
 
-    prompt = (
-        "System:\n"
-        "You (HaulogyBot) are a helpful chatbot that answers questions about Haulogy.\n"
-        "The retrieved documents are below:\n"
-        "```\n"
-        "{context}\n"
-        "```\n"
-        "Given the information from the retrieved documents, answer the query.\n"
-        "Query: {question}\n"
-        "HaulogyBot:\n"
-    )
+    print("Querying index...")
 
-    prompt = prompt.format(context=context, question=question)
-
-    return llama_index_vars.generate_func(prompt, prompt, seed, state, stopping_strings)
+    return in_context_response(context, question, seed, state, stopping_strings, llama_index_vars)
 
 
 def compose_response(question: str, responses: List[str], seed: int, state: dict,
@@ -415,29 +463,6 @@ def compose_response(question: str, responses: List[str], seed: int, state: dict
 
     return llama_index_vars.generate_func(prompt, prompt,
                                           seed, state, stopping_strings)
-
-
-def restate_question(question: str, seed: int, state: dict,
-                     stopping_strings: List[str],
-                     llama_index_vars: LlamaIndexVars):
-    """
-    Given the chat history and the question,
-    restate the question in one sentence.
-    """
-
-    prompt = (
-        "{question}\n"
-        "Given the chat history above, \
-            restate the last user's question in a single sentence.'\n"
-        "Keep the question brief. It should not be longer than 50 words.\n"
-        "If the question is in another language, \
-            please do not translate it and keep it in the original language.\n"
-        "HaulogyBot:\n"
-    )
-
-    prompt = prompt.format(question=question)
-
-    return llama_index_vars.generate_func(prompt, prompt, seed, state, stopping_strings)
 
 
 def wandb_trace(name: str, inputs: str, outputs: str, parent: Trace | None):
@@ -467,37 +492,27 @@ def conf_jira_pipeline(question: str, seed: int, state: dict,
     to_summarize = []
     current_span = llama_index_vars.current_span
 
-    # First, restate the question
-    response_gen_restate = restate_question(question, seed,
-                                            state, stopping_strings, llama_index_vars)
-
-    # Unroll the generator
-    restated_question = ""
-    for restated_question in response_gen_restate:
-        yield restated_question
-    all_responses.append(annotate_response(restated_question, "Restated question", header_size=2,
-                                           sep_line=True, quote=True))
-
-    wandb_trace("HaulogyBot_Restate", question, restated_question, current_span)
-
     # Use the jira pipeline to get the first response
-    response_gen_jira = jira_pipeline(restated_question, seed,
+    print("Querying Jira...")
+    response_gen_jira = jira_pipeline(question, seed,
                                       state, stopping_strings, llama_index_vars)
 
     # Unroll the generator
     first_response = ""
     for first_response in response_gen_jira:
         yield first_response
+
     all_responses.append(annotate_response(first_response, "Jira Pipeline", header_size=2,
                                            sep_line=False, quote=False))
 
     to_summarize.append(first_response)
 
-    wandb_trace("HaulogyBot_Jira", restated_question, first_response, current_span)
+    wandb_trace("HaulogyBot_Jira", question, first_response, current_span)
 
     # Use the search tool to get the second response
+    print("Querying Jira index...")
     jira_index = llama_index_vars.jira_index
-    response_gen_search = query_index(restated_question, seed,
+    response_gen_search = query_index(question, seed,
                                     state, stopping_strings,
                                     jira_index,
                                     llama_index_vars)
@@ -506,33 +521,36 @@ def conf_jira_pipeline(question: str, seed: int, state: dict,
     jira_sim_response = ""
     for jira_sim_response in response_gen_search:
         yield "\n".join(all_responses) + "\n" + jira_sim_response
+
     all_responses.append(annotate_response(jira_sim_response, "Jira Similarity Search Tool",
                                         header_size=3, sep_line=True))
 
     to_summarize.append(jira_sim_response)
 
-    wandb_trace("HaulogyBot_Jira_Sim_Search", restated_question, jira_sim_response, current_span)
+    wandb_trace("HaulogyBot_Jira_Sim_Search", question, jira_sim_response, current_span)
 
     # Then, use the confluence search tool to have the third response
+    print("Querying Confluence index...")
     conf_index = llama_index_vars.conf_index
-    response_gen_conf = query_index(restated_question, seed,
+    response_gen_conf = query_index(question, seed,
                                                state, stopping_strings,
                                                conf_index,
                                                llama_index_vars)
 
     # Unroll the generator
-    third_response = ""
-    for third_response in response_gen_conf:
-        yield "\n".join(all_responses) + "\n" + third_response
-    all_responses.append(annotate_response(third_response, "Confluence search Tool",
+    conf_sim_response = ""
+    for conf_sim_response in response_gen_conf:
+        yield "\n".join(all_responses) + "\n" + conf_sim_response
+
+    all_responses.append(annotate_response(conf_sim_response, "Confluence search Tool",
                                            header_size=2, sep_line=True))
 
-    to_summarize.append(third_response)
+    to_summarize.append(conf_sim_response)
 
-    wandb_trace("HaulogyBot_Confluence", restated_question, third_response, current_span)
+    wandb_trace("HaulogyBot_Confluence", question, conf_sim_response, current_span)
 
     # Finally, compose the two responses
-    response = compose_response(restated_question, to_summarize, seed, state,
+    response = compose_response(question, to_summarize, seed, state,
                                 stopping_strings, llama_index_vars)
 
     # Unroll the generator
@@ -540,7 +558,7 @@ def conf_jira_pipeline(question: str, seed: int, state: dict,
     for final_response in response:
         yield "\n".join(all_responses) + "\n" + final_response
 
-    wandb_trace("HaulogyBot_Compose", restated_question, final_response, current_span)
+    wandb_trace("HaulogyBot_Compose", question, final_response, current_span)
 
     yield "\n".join(all_responses) + "\n" +\
         annotate_response(final_response, "Final answer", header_size=1)

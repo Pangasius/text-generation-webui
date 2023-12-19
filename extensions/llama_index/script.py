@@ -17,7 +17,11 @@ from modules.text_generation import (
 
 from extensions.llama_index.llama_index_extension import IndexEngine
 
-from extensions.llama_index.stages.stages import LlamaIndexVars, conf_jira_pipeline
+from extensions.llama_index.stages.stages import (
+    LlamaIndexVars,
+    conf_jira_pipeline,
+    Summarizer
+)
 
 global LLAMA_INDEX_VARS
 LLAMA_INDEX_VARS = None
@@ -28,7 +32,7 @@ CONF_INDEX_NAME = "conf_entity"
 JIRA_DATASET = "jira_3_12_2023"
 JIRA_INDEX_NAME = "jira_entity"
 
-WANDB_LOG = True
+WANDB_LOG = False
 
 
 def setup():
@@ -41,6 +45,10 @@ def setup():
     # TODO: Change when go to production
     if WANDB_LOG:
         wandb.init(project="Haulogy-First-Test")
+
+    # basic checks to avoid infinite loops
+    if shared.args.n_ctx < 512:
+        raise Exception("The context length is too short. Please increase it.")
 
     # Initialize the index engine so that a maximum of models are shared
     index = IndexEngine()
@@ -65,12 +73,14 @@ def setup():
 
     generate_func = get_generate_func()
 
+    summarizer = Summarizer()
+
     global LLAMA_INDEX_VARS
     LLAMA_INDEX_VARS = LlamaIndexVars(conf_index=confluence_retriever,
                                       jira_index=jira_retriever,
                                       jira_tool=jira_tool,
-                                      generate_func=generate_func
-                                      )
+                                      generate_func=generate_func,
+                                      summarizer=summarizer)
 
 
 def output_modifier(output: str, state: dict, is_chat=False):

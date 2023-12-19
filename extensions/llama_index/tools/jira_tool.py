@@ -1,7 +1,7 @@
 """This module is used to dynamically load Jira issues when they are requested"""
 
 import json
-from typing import Dict
+from typing import Dict, List
 from attr import dataclass
 import requests
 
@@ -70,7 +70,7 @@ class JiraToolSpec():
 
         self.categories = config["categories"]
         self.login_data = config["login_data"]
-        self.last_results = None
+        self.last_results = []
         self.last_details = None
         self.last_summary = None
 
@@ -115,7 +115,7 @@ class JiraToolSpec():
             raise JiraQueryError("Query failed with status code " + str(response.status_code) + ".")
 
         # Parse results
-        self.last_results = response.json()["issues"]
+        self.last_results: List[dict] = response.json()["issues"]
 
         if len(self.last_results) == 0:
             return "FAILED: No issue found."
@@ -141,14 +141,13 @@ class JiraToolSpec():
         Args:
             issue (str): The issue key exactly.
         """
-        if self.last_results is None:
+        if len(self.last_results) == 0:
             return "FAILED: No query has been made yet, please use jira_query(keywords)."
 
         # Get the description and comments
 
         to_return = None
         if isinstance(issue_requested, str):
-            comments = {}
             for issue in self.last_results:
                 if issue["key"] == issue_requested:
                     to_return = issue
@@ -159,11 +158,27 @@ class JiraToolSpec():
             return f"FAILED: Issue {issue_requested} not found. \
                 Available issues are: {', '.join([issue['key'] for issue in self.last_results])}"
 
-        # Format the result
+        return json.dumps(to_return, indent=4, sort_keys=True)
 
-        self.last_results = json.dumps(to_return, indent=4, sort_keys=True)
+    def get_all_issues_details(self, issues: List[dict]) -> List[str]:
+        """
+        Gives all the description and comments about all the issues.
+        """
 
-        # Here we have to print or the variable is not saved
-        print(self.last_results)
+        return [json.dumps(issue, indent=4) for issue in issues]
 
-        return self.last_results
+    def filter_out_issues(self, filter) -> List[dict]:
+        """
+        Filter out issues based on the filter
+
+        False means the issue is removed
+        """
+        if len(self.last_results) == 0:
+            return []
+
+        keep = []
+        for issue in self.last_results:
+            if filter(issue["fields"]["summary"]):
+                keep.append(issue)
+
+        return keep
