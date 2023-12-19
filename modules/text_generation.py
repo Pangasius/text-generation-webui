@@ -103,6 +103,7 @@ def _generate_reply(question, state, stopping_strings=None, is_chat=False, escap
                     yield reply
 
         if stop_found or (state['max_tokens_second'] > 0 and shared.stop_everything):
+            print('Stopping generation')
             break
 
     if not is_chat:

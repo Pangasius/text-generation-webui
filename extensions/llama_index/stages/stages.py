@@ -52,7 +52,7 @@ class Summarizer:
         for i in range(0, len(texts), 2):
             input_ids = self.tokenizer(texts[i:i + 2], return_tensors="pt", padding=True).input_ids.to("cuda:0")
 
-            summary_ids = self.model.generate(input_ids, max_length=256, early_stopping=True, min_length=min(len(texts[i]), 64))
+            summary_ids = self.model.generate(input_ids, max_length=256, early_stopping=True, min_length=min(len(texts[i]), 16))
 
             if i + 4 >= len(texts):
                 last_pass = True
