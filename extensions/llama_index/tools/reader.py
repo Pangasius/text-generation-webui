@@ -4,6 +4,7 @@ from llama_index.readers.base import BaseReader
 from llama_index import Document
 from typing import Any, List
 
+from bs4 import BeautifulSoup
 
 class ConfluenceReader(BaseReader):
     """This is a reader to read the structured from custom json files"""
@@ -41,6 +42,10 @@ class ConfluenceReader(BaseReader):
         # Remove attachments for now
         if "attachments" in metadata:
             metadata.pop("attachments")
+
+        # Remove html tags because they take a lot of space
+        soup = BeautifulSoup(content,features="lxml")
+        content = soup.get_text("\n")
 
         doc = Document(text=content, metadata=metadata)
 
@@ -84,7 +89,7 @@ class JiraReader(BaseReader):
         # id, key, project, date, type, summary, resolution, status
         metadata = {}
 
-        for key in ("id", "key", "date", "type", "resolution", "status", "versions"):
+        for key in ("project", "id", "key", "date", "type", "resolution", "status", "versions"):
             if key == "resolution" and "resolution" in j and j["resolution"] and "name" in j["resolution"]:
                 metadata["resolution"] = j["resolution"]["name"]
             elif key == "resolution":
@@ -94,16 +99,19 @@ class JiraReader(BaseReader):
 
         content = {}
 
-        for key in ("project", "summary", "description", "comments", "fixVersion"):
+        for key in ("summary", "description", "comments", "fixVersion"):
             if key == "comments":
                 if j[key]:
-                    content[key] = "\n".join([comment["content"] for comment in j[key]])
+                    content[key] = "\n\n".join([comment["content"] for comment in j[key]])
                 else:
                     content[key] = ""
             else:
                 content[key] = j[key]
 
-        doc = Document(text=json.dumps(content), metadata=metadata)
+        # only keep the values for the content
+        content = "\n\n".join(map(str, [value for value in content.values() if value]))
+
+        doc = Document(text=content, metadata=metadata)
 
         return [doc]
 

@@ -27,10 +27,10 @@ global LLAMA_INDEX_VARS
 LLAMA_INDEX_VARS = None
 
 CONF_DATASET = "conf_3_12_2023"
-CONF_INDEX_NAME = "conf_entity"
+CONF_INDEX_NAME = "conf_entity_no_html"
 
 JIRA_DATASET = "jira_3_12_2023"
-JIRA_INDEX_NAME = "jira_entity"
+JIRA_INDEX_NAME = "jira_entity_no_json"
 
 WANDB_LOG = False
 
@@ -47,7 +47,7 @@ def setup():
         wandb.init(project="Haulogy-First-Test")
 
     # basic checks to avoid infinite loops
-    if shared.args.n_ctx < 512:
+    if shared.args.n_ctx < 1024:
         raise Exception("The context length is too short. Please increase it.")
 
     # Initialize the index engine so that a maximum of models are shared
@@ -171,7 +171,7 @@ def custom_generate_reply(*args, **kwargs):
 
     ans = ""
     try:
-        for ans in conf_jira_pipeline(question, seed, state, stopping_strings, LLAMA_INDEX_VARS):
+        for ans in conf_jira_pipeline(question, original_question, seed, state, stopping_strings, LLAMA_INDEX_VARS):
             yield ans
 
     except RuntimeError as e:

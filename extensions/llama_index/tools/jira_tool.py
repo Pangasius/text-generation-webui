@@ -178,7 +178,8 @@ class JiraToolSpec():
 
         keep = []
         for issue in self.last_results:
-            if filter(issue["fields"]["summary"]):
+            passage = issue["fields"]["summary"] + " " + issue["fields"]["description"][:1024]
+            if filter(passage):
                 keep.append(issue)
 
         return keep

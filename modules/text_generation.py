@@ -78,7 +78,7 @@ def _generate_reply(question, state, stopping_strings=None, is_chat=False, escap
         state['stream'] = True
 
     # Generate
-    for reply in generate_func(question, original_question, seed, state, stopping_strings, is_chat=is_chat):
+    for reply in generate_func(question, original_question, seed, state, all_stop_strings, is_chat=is_chat):
         reply, stop_found = apply_stopping_strings(reply, all_stop_strings)
         if escape_html:
             reply = html.escape(reply)
