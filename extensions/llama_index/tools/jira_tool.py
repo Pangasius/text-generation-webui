@@ -178,7 +178,11 @@ class JiraToolSpec():
 
         keep = []
         for issue in self.last_results:
-            passage = issue["fields"]["summary"] + " " + issue["fields"]["description"][:1024]
+            passage = issue["fields"]["summary"]
+
+            if "description" in issue["fields"] and issue["fields"]["description"] is not None:
+                passage = passage + " " + issue["fields"]["description"][:512]
+
             if filter(passage):
                 keep.append(issue)
 

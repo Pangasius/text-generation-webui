@@ -147,15 +147,16 @@ def query_jira_issue(question: str, seed: int, state: dict,
 
     prompt_template = (
         "System:\n"
-        "You (HaulogyBot) are a helpful chatbot that answers questions about Haulogy. \
-            You can access with one line commands special tools such as the Jira search tool.\n"
-        "Task:\n"
-        "Given the following function description:\n"
-        "{doc}\n"
-        "And the following request:\n"
-        "{question}\n"
+        "###Task Description:\n"
+        "You (HaulogyBot) are a helpful chatbot that answers questions about Haulogy.\n"
+        "You can access with one line commands special tools such as the Jira search tool.\n"
         "Call the function with the correct arguments in one line of Python code.\n"
-        "Answer:\n"
+        "###The documentation of the function:\n"
+        "{doc}\n"
+        "###The question:\n"
+        "{question}\n"
+        "<|end_of_turn|>GPT4 Correct Assistant:\n"
+        "###Answer:\n"
         "{function_name}"
     )
 
@@ -264,17 +265,22 @@ def determine_usefulness(context: str, question: str, state: dict, all_responses
 
     prompt = (
         "System:\n"
+        "###Task Description:\n"
         "You are a perfect decision maker, able to extrapolate the contents of a summary to guess the relevancy of a passage to a question.\n"
-        "Here follows a summary:\n"
-        "```\n"
-        "{context}\n"
-        "```\n"
-        "And a question, that may or may not be related:\n"
-        "```\n"
-        "{question}\n"
-        "```\n"
         "Can the query be answered with the summary? (Yes/No) \n"
-        "Answer:\n"
+        "###Examples:\n"
+        "Question: What do the foxes eat?\n"
+        "Summary: Nutrition of animals.\n"
+        "Answer: Yes\n"
+        "Question: What is the capital of France?\n"
+        "Summary: Conflicts in the middle east.\n"
+        "Answer: No\n"
+        "###The summary to evaluate:\n"
+        "{context}\n"
+        "###The question:\n"
+        "{question}\n"
+        "<|end_of_turn|>GPT4 Correct Assistant:\n"
+        "###Answer:\n"
     )
 
     # here we will determine the answer based on the logits of the LLM
@@ -289,7 +295,9 @@ def determine_usefulness(context: str, question: str, state: dict, all_responses
     yes_logits = logits["Yes"]
     no_logits = logits["No"]
 
-    emoji = "👍" if yes_logits > no_logits else "👎"
+    verdict = (yes_logits / no_logits) > 0.5
+
+    emoji = "👍" if verdict else "👎"
 
     log_text = f"The logits for **yes** are {yes_logits} and the logits for **no** are {no_logits} concerning the relevance of the context:\n {context}.\
         \nAre you sure the context is relevant? {emoji}"
@@ -298,12 +306,12 @@ def determine_usefulness(context: str, question: str, state: dict, all_responses
                                            sep_line=False, quote=True))
 
     # if the logits for yes are higher than the logits for no, then the answer is yes
-    return yes_logits > no_logits
+    return verdict
 
 
 def jira_pipeline(question: str, seed: int, state: dict,
                   stopping_strings: List[str],
-                  llama_index_vars: LlamaIndexVars):
+                  llama_index_vars: LlamaIndexVars) -> Generator[tuple[str, str], None, None]:
     """
     This function is the main pipeline for the Jira tool.
     It will call all the functions above in order.
@@ -324,7 +332,7 @@ def jira_pipeline(question: str, seed: int, state: dict,
 
     # Unroll the generator
     for ans in response:
-        yield ans
+        yield ans, ""
         if ")" in ans:
             ans = ans[:ans.rfind(")") + 1]
             break
@@ -350,7 +358,7 @@ def jira_pipeline(question: str, seed: int, state: dict,
 
     # considered unrecoverable at this point
     if issues.startswith("FAILED") or issues.startswith("ERROR"):
-        yield "\n".join(all_responses) + "\n" + issues + PIPELINE_FAILURE
+        yield "\n".join(all_responses) + "\n" + issues + PIPELINE_FAILURE, ""
         return
 
     all_responses.append(annotate_response(issues, "Jira Query Result", header_size=3,
@@ -361,11 +369,11 @@ def jira_pipeline(question: str, seed: int, state: dict,
 
     # In case there is no issue left, we stop the pipeline
     if len(issues) == 0:
-        yield "\n".join(all_responses) + "\n" + "No relevant issue found." + PIPELINE_FAILURE
+        yield "\n".join(all_responses) + "\n" + "No relevant issue found." + PIPELINE_FAILURE, ""
         return
 
     # Then, we detail the issues
-    yield "\n".join(all_responses) + "Summarizing issues..."
+    yield "\n".join(all_responses) + "Summarizing issues...", ""
 
     # here the issues are concatenated and passed to be summarized
     contexts = llama_index_vars.jira_tool.get_all_issues_details(issues)
@@ -374,11 +382,11 @@ def jira_pipeline(question: str, seed: int, state: dict,
     summarize_contexts(contexts, llama_index_vars.summarizer)
 
     # filter out irrelevant contexts
-    contexts = [context for context in contexts if determine_usefulness(context, question, state, all_responses)]
+    #contexts = [context for context in contexts if #determine_usefulness(context, question, state, all_responses)]
 
-    if len(contexts) == 0:
-        yield "\n".join(all_responses) + "\n" + "No relevant context found." + PIPELINE_FAILURE
-        return
+    #if len(contexts) == 0:
+    #    yield "\n".join(all_responses) + "\n" + "No relevant context found." + PIPELINE_FAILURE, ""
+    #    return
 
     for context, index in zip(contexts, range(len(contexts))):
         response_gen = in_context_response(context, question, seed, state, stopping_strings, llama_index_vars)
@@ -391,22 +399,22 @@ def jira_pipeline(question: str, seed: int, state: dict,
             if stop_found:
                 break
 
-            yield "\n".join(all_responses) + "\n" + response
+            yield "\n".join(all_responses) + "\n" + response, ""
 
         all_responses.append(annotate_response(response, f"Jira Context {index}", header_size=3,
                                                sep_line=False, quote=True))
 
-        yield "\n".join(all_responses)
+        yield "\n".join(all_responses), ""
 
-        contexts[index] = context
+        contexts[index] = response
 
     # Finally, compose the answer by summarizing all responses
-    summarize_contexts(contexts=["\n".join(contexts)], summarizer=llama_index_vars.summarizer)
+    contexts = ["\n".join(contexts)]
 
     all_responses.append(annotate_response(contexts[0], "Jira Final Answer", header_size=3,
                                            sep_line=False, quote=True))
 
-    yield "\n".join(all_responses) + "\n" + contexts[0]
+    yield "\n".join(all_responses) + "\n" + contexts[0], contexts[0]
 
 
 def in_context_response(context: str, question: str, seed: int, state: dict,
@@ -416,13 +424,16 @@ def in_context_response(context: str, question: str, seed: int, state: dict,
 
     prompt = (
         "System:\n"
+        "###Task Description:\n"
         "You (HaulogyBot) are a helpful chatbot that can answer Haulogy related questions thanks to summaries.\n"
-        "The retrieved documents are below:\n"
+        "Provide a factual answer to the question using the retrieved documents.\n"
+        "If you cannot answer the question, just say so.\n"
+        "###Retrieved documents:\n"
         "{context}\n"
-        "Given the information from the retrieved documents, answer the query below:\n"
+        "###Question to answer with the documents:\n"
         "{question}\n"
-        "If no answer can be found, simply summarize the passage.\n"
-        "Answer:\n"
+        "<|end_of_turn|>GPT4 Correct Assistant:\n"
+        "###Answer:\n"
     )
 
     prompt = prompt.format(context=context, question=question)
@@ -464,12 +475,15 @@ def compose_response(question: str, responses: List[str], seed: int, state: dict
 
     prompt = (
         "System:\n"
+        "###Task Description\n"
         "You (HaulogyBot) are a helpful chatbot that answers questions about Haulogy.\n"
-        "Here follows a list of potential responses to the query from different sources:\n"
+        "Given the information below, answer the query.\n"
+        "###Given responses:\n"
         "{responses}\n"
-        "Given the information above, answer the query.\n"
-        "Query: {question}\n"
-        "Answer:\n"
+        "###Query:\n"
+        "{question}\n"
+        "<|end_of_turn|>GPT4 Correct Assistant:\n"
+        "###Answer:\n"
     )
 
     prompt = prompt.format(responses=responses, question=question)
@@ -513,20 +527,21 @@ def conf_jira_pipeline(question: str, original_question: str, seed: int, state: 
                                       state, stopping_strings, llama_index_vars)
 
     # Unroll the generator
-    first_response = ""
-    for first_response in response_gen_jira:
-        first_response, stop_found = apply_stopping_strings(first_response, stopping_strings)
+    first_text, first_response = "", ""
+    for first_text, first_response in response_gen_jira:
+        first_text, stop_found = apply_stopping_strings(first_text, stopping_strings)
 
         if stop_found:
             break
-        yield first_response
+        yield first_text
 
-    all_responses.append(annotate_response(first_response, "Jira Pipeline", header_size=2,
+    all_responses.append(annotate_response(first_text, "Jira Pipeline", header_size=2,
                                            sep_line=False, quote=False))
 
-    to_summarize.append(first_response)
+    if first_response is not None:
+        to_summarize.append(first_response)
 
-    wandb_trace("HaulogyBot_Jira", original_question, first_response, current_span)
+        wandb_trace("HaulogyBot_Jira", original_question, first_response, current_span)
 
     # Use the search tool to get the second response
     print("Querying Jira index...")
@@ -575,6 +590,8 @@ def conf_jira_pipeline(question: str, original_question: str, seed: int, state: 
                                            header_size=2, sep_line=True))
 
     to_summarize.append(conf_sim_response)
+
+    to_summarize = [f"Source {i}:\n" + x for i, x in enumerate(to_summarize)]
 
     wandb_trace("HaulogyBot_Confluence", original_question, conf_sim_response, current_span)
 

@@ -6,6 +6,7 @@ from typing import Any, List
 
 from bs4 import BeautifulSoup
 
+
 class ConfluenceReader(BaseReader):
     """This is a reader to read the structured from custom json files"""
 
@@ -44,7 +45,7 @@ class ConfluenceReader(BaseReader):
             metadata.pop("attachments")
 
         # Remove html tags because they take a lot of space
-        soup = BeautifulSoup(content,features="lxml")
+        soup = BeautifulSoup(content, features="lxml")
         content = soup.get_text("\n")
 
         doc = Document(text=content, metadata=metadata)
