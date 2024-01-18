@@ -381,13 +381,6 @@ def jira_pipeline(question: str, seed: int, state: dict,
     # summarize the contexts
     summarize_contexts(contexts, llama_index_vars.summarizer)
 
-    # filter out irrelevant contexts
-    #contexts = [context for context in contexts if #determine_usefulness(context, question, state, all_responses)]
-
-    #if len(contexts) == 0:
-    #    yield "\n".join(all_responses) + "\n" + "No relevant context found." + PIPELINE_FAILURE, ""
-    #    return
-
     for context, index in zip(contexts, range(len(contexts))):
         response_gen = in_context_response(context, question, seed, state, stopping_strings, llama_index_vars)
 
