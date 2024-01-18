@@ -1,7 +1,6 @@
 import os
 import yaml
 import warnings
-
 import json
 import signal
 import sys
@@ -40,6 +39,7 @@ from modules.models_settings import (
     get_model_metadata,
     update_model_parameters
 )
+from modules.shared import do_cmd_flags_warnings
 from modules.utils import gradio
 
 with RequestBlocker():
@@ -50,6 +50,8 @@ os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 warnings.filterwarnings('ignore', category=UserWarning, message='TypedStorage is deprecated')
 warnings.filterwarnings('ignore', category=UserWarning, message='Using the update method is deprecated')
 warnings.filterwarnings('ignore', category=UserWarning, message='Field "model_name" has conflict')
+warnings.filterwarnings('ignore', category=UserWarning, message='The value passed into gr.Dropdown()')
+warnings.filterwarnings('ignore', category=UserWarning, message='Field "model_names" has conflict')
 
 matplotlib.use('Agg')  # This fixes LaTeX rendering on some systems
 
@@ -171,6 +173,9 @@ def create_interface():
 
 if __name__ == "__main__":
 
+    logger.info("Starting Text generation web UI")
+    do_cmd_flags_warnings()
+
     # Load custom settings
     settings_file = None
     if shared.args.settings is not None and Path(shared.args.settings).exists():
@@ -181,7 +186,7 @@ if __name__ == "__main__":
         settings_file = Path('settings.json')
 
     if settings_file is not None:
-        logger.info(f"Loading settings from {settings_file}...")
+        logger.info(f"Loading settings from {settings_file}")
         file_contents = open(settings_file, 'r', encoding='utf-8').read()
         new_settings = (json.loads(file_contents)
                         if settings_file.suffix == "json"
